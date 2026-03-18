@@ -164,62 +164,293 @@ class WeChatAPI:
         return response.json()
 
 
-def markdown_to_wechat_html(markdown_content: str) -> str:
+def markdown_to_wechat_html(markdown_content: str, theme_color: str = "#1E88E5") -> str:
     """
     将 Markdown 转换为微信公众号友好的 HTML
-    可以自定义样式以符合公众号排版规范
+    支持多种主题颜色和精美排版样式
     """
     import markdown
 
-    # 自定义 CSS 样式
-    css_style = """
+    # 自定义 CSS 样式 - 优化版微信公众号排版
+    css_style = f"""
     <style>
-    body {
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    /* 全局设置 */
+    body {{
+        font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
         font-size: 16px;
-        line-height: 1.75;
+        line-height: 1.8;
         color: #333;
-        padding: 0 12px;
-    }
-    h1, h2, h3 {
-        color: #1E88E5;
-        margin-top: 24px;
-        margin-bottom: 16px;
-    }
-    h1 { font-size: 20px; border-bottom: 2px solid #1E88E5; padding-bottom: 8px; }
-    h2 { font-size: 18px; border-left: 4px solid #1E88E5; padding-left: 12px; }
-    h3 { font-size: 16px; }
-    p { margin: 16px 0; }
-    code {
-        background-color: #f5f5f5;
-        padding: 2px 6px;
+        padding: 0 16px;
+        max-width: 672px;
+        margin: 0 auto;
+        word-wrap: break-word;
+    }}
+
+    /* 标题样式 */
+    h1 {{
+        font-size: 22px;
+        font-weight: 700;
+        color: {theme_color};
+        text-align: center;
+        margin: 32px 0 20px;
+        padding-bottom: 12px;
+        border-bottom: 2px solid {theme_color};
+        line-height: 1.4;
+    }}
+
+    h2 {{
+        font-size: 18px;
+        font-weight: 600;
+        color: {theme_color};
+        margin: 28px 0 14px;
+        padding: 8px 0 8px 14px;
+        border-left: 4px solid {theme_color};
+        background: linear-gradient(to right, rgba(30,136,229,0.05), transparent);
+        line-height: 1.4;
+    }}
+
+    h3 {{
+        font-size: 16px;
+        font-weight: 600;
+        color: #2c3e50;
+        margin: 24px 0 12px;
+        padding-left: 12px;
+        line-height: 1.4;
+    }}
+
+    h4 {{
+        font-size: 15px;
+        font-weight: 600;
+        color: #34495e;
+        margin: 20px 0 10px;
+        line-height: 1.4;
+    }}
+
+    /* 段落样式 */
+    p {{
+        margin: 18px 0;
+        text-align: justify;
+        line-height: 1.9;
+        color: #333;
+    }}
+
+    /* 引用块样式 */
+    blockquote {{
+        margin: 24px 0;
+        padding: 16px 20px;
+        border-left: none;
+        border-radius: 8px;
+        background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+        position: relative;
+        color: #555;
+        font-style: normal;
+    }}
+    blockquote::before {{
+        content: "\\201C";
+        font-size: 48px;
+        color: {theme_color};
+        opacity: 0.2;
+        position: absolute;
+        top: -8px;
+        left: 12px;
+        font-family: Georgia, serif;
+    }}
+
+    /* 行内代码样式 */
+    code {{
+        background: #f5f7f9;
+        padding: 3px 8px;
         border-radius: 4px;
         font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
         font-size: 14px;
-    }
-    pre {
-        background-color: #f6f8fa;
+        color: #e74c3c;
+        border: 1px solid #e8ecef;
+    }}
+
+    /* 代码块样式 */
+    pre {{
+        background: #282c34;
         padding: 16px;
-        border-radius: 6px;
+        border-radius: 8px;
         overflow-x: auto;
-        font-size: 14px;
-    }
-    blockquote {
-        border-left: 4px solid #ddd;
-        padding-left: 16px;
-        color: #666;
+        font-size: 13px;
+        line-height: 1.6;
+        margin: 20px 0;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }}
+    pre code {{
+        background: transparent;
+        padding: 0;
+        color: #abb2bf;
+        border: none;
+    }}
+
+    /* 列表样式 */
+    ul, ol {{
+        padding-left: 24px;
         margin: 16px 0;
-    }
-    ul, ol { padding-left: 24px; }
-    li { margin: 8px 0; }
-    a { color: #1E88E5; text-decoration: none; }
-    strong { color: #000; }
+    }}
+    li {{
+        margin: 10px 0;
+        line-height: 1.8;
+        text-align: justify;
+    }}
+    ul > li::marker {{
+        color: {theme_color};
+    }}
+
+    /* 链接样式 */
+    a {{
+        color: {theme_color};
+        text-decoration: none;
+        border-bottom: 1px dashed {theme_color};
+        padding-bottom: 2px;
+    }}
+    a:hover {{
+        opacity: 0.8;
+    }}
+
+    /* 强调文本样式 */
+    strong, b {{
+        color: {theme_color};
+        font-weight: 600;
+    }}
+
+    /* 表格样式 */
+    table {{
+        width: 100%;
+        border-collapse: collapse;
+        margin: 20px 0;
+        font-size: 14px;
+    }}
+    th {{
+        background: {theme_color};
+        color: white;
+        padding: 12px 8px;
+        text-align: left;
+        font-weight: 600;
+    }}
+    td {{
+        padding: 10px 8px;
+        border-bottom: 1px solid #e0e0e0;
+    }}
+    tr:nth-child(even) {{
+        background: #f8f9fa;
+    }}
+
+    /* 分割线样式 */
+    hr {{
+        border: none;
+        height: 2px;
+        background: linear-gradient(to right, transparent, {theme_color}, transparent);
+        margin: 32px 0;
+    }}
+
+    /* 图片样式 */
+    img {{
+        max-width: 100%;
+        height: auto;
+        display: block;
+        margin: 20px auto;
+        border-radius: 8px;
+    }}
+
+    /* 重点框样式 */
+    .highlight-box {{
+        border: 2px solid {theme_color};
+        border-radius: 8px;
+        padding: 16px;
+        margin: 20px 0;
+        background: rgba(30,136,229,0.03);
+    }}
+
+    /* 提示框样式 */
+    .tip-box {{
+        background: linear-gradient(135deg, #fff3cd 0%, #ffe69c 100%);
+        border-left: 4px solid #ffc107;
+        border-radius: 6px;
+        padding: 14px 16px;
+        margin: 20px 0;
+    }}
+
+    /* 成功框样式 */
+    .success-box {{
+        background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
+        border-left: 4px solid #28a745;
+        border-radius: 6px;
+        padding: 14px 16px;
+        margin: 20px 0;
+    }}
+
+    /* 警告框样式 */
+    .warning-box {{
+        background: linear-gradient(135deg, #f8d7da 0%, #f5c6cb 100%);
+        border-left: 4px solid #dc3545;
+        border-radius: 6px;
+        padding: 14px 16px;
+        margin: 20px 0;
+    }}
+
+    /* 底部关注引导样式 */
+    .footer-guide {{
+        text-align: center;
+        margin-top: 40px;
+        padding: 20px;
+        background: linear-gradient(135deg, #f5f7fa 0%, #e4e8eb 100%);
+        border-radius: 12px;
+    }}
     </style>
     """
 
     html_content = markdown.markdown(
         markdown_content,
-        extensions=['extra', 'codehilite', 'tables']
+        extensions=['extra', 'codehilite', 'tables', 'nl2br']
+    )
+
+    # 添加一些自动美化处理
+    # 将普通的 blockquote 转换为带样式的引用
+    html_content = html_content.replace(
+        '<blockquote>',
+        '<blockquote>'
     )
 
     return css_style + html_content
+
+
+def get_wechat_templates():
+    """
+    获取微信公众号排版模板
+    返回多种预设样式模板
+    """
+    return {
+        "default": {
+            "name": "默认蓝",
+            "theme_color": "#1E88E5",
+            "description": "清爽蓝色主题，适合大多数场景"
+        },
+        "green": {
+            "name": "清新绿",
+            "theme_color": "#2E7D32",
+            "description": "清新绿色主题，适合环保、健康类文章"
+        },
+        "orange": {
+            "name": "活力橙",
+            "theme_color": "#EF6C00",
+            "description": "活力橙色主题，适合资讯、热点类文章"
+        },
+        "purple": {
+            "name": "优雅紫",
+            "theme_color": "#7B1FA2",
+            "description": "优雅紫色主题，适合艺术、设计类文章"
+        },
+        "red": {
+            "name": "中国红",
+            "theme_color": "#C62828",
+            "description": "中国红主题，适合节日、庆典类文章"
+        },
+        "dark": {
+            "name": "商务黑",
+            "theme_color": "#424242",
+            "description": "深色商务主题，适合专业、严肃类文章"
+        }
+    }

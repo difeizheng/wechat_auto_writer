@@ -9,7 +9,7 @@
     "qwen-turbo",
     "qwen-max"
   ],
-  "current_platform": "自定义平台",
+  "current_platform": "通义千问",
   "platforms": {
     "OpenAI": {
       "model_name": "gpt-4o"

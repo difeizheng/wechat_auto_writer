@@ -15,7 +15,9 @@ sys.path.insert(0, str(project_root))
 
 from app.generator import ArticleGenerator, GeneratedArticle, ArticleOutline
 from app.models import init_db, get_session, Article
-from app.wechat import markdown_to_wechat_html
+from app.wechat import markdown_to_wechat_html, get_wechat_templates
+from app.hot_topics import get_tracker, format_topics_for_prompt, HotTopic
+from app.scheduler import get_scheduler, init_scheduler
 
 
 # 页面配置
@@ -276,6 +278,21 @@ def init_session_state():
     if "show_manage_models" not in st.session_state:
         st.session_state.show_manage_models = False
 
+    # 排版主题配置
+    if "wechat_theme" not in st.session_state:
+        st.session_state.wechat_theme = "default"
+
+    # 热点话题缓存
+    if "hot_topics" not in st.session_state:
+        st.session_state.hot_topics = None
+    if "hot_topics_last_fetch" not in st.session_state:
+        st.session_state.hot_topics_last_fetch = None
+
+    # 初始化调度器
+    if "scheduler_initialized" not in st.session_state:
+        init_scheduler()
+        st.session_state.scheduler_initialized = True
+
 
 def sidebar_config():
     """侧边栏配置"""
@@ -483,6 +500,23 @@ def sidebar_config():
 
         st.divider()
 
+        # 排版主题设置
+        st.subheader("🎨 排版主题")
+        templates = get_wechat_templates()
+        template_options = list(templates.keys())
+        template_labels = [f"{templates[k]['name']}" for k in template_options]
+
+        selected_theme = st.selectbox(
+            "选择主题",
+            options=template_options,
+            format_func=lambda x: templates[x]["name"],
+            index=template_options.index(st.session_state.wechat_theme) if st.session_state.wechat_theme in template_options else 0
+        )
+        st.session_state.wechat_theme = selected_theme
+        st.caption(templates[selected_theme]["description"])
+
+        st.divider()
+
         # 快捷操作
         st.header("📁 快捷操作")
 
@@ -507,7 +541,7 @@ def sidebar_config():
         ### 关于
         公众号文章自动生成系统 v1.0
 
-        使用 Claude AI 自动生成高质量公众号文章
+        使用 AI 自动生成高质量公众号文章
         """)
 
 
@@ -518,30 +552,41 @@ def step1_input_topic():
 
     col1, col2 = st.columns([2, 1])
 
+    # 获取预设主题（从热点追踪跳转）
+    preset_topic = st.session_state.get('topic', '')
+    preset_template = st.session_state.get('template_type', 'newsAnalysis')
+    preset_requirements = st.session_state.get('custom_requirements', '')
+
     with col1:
         topic = st.text_area(
             "🎯 文章主题/关键词",
+            value=preset_topic,
             placeholder="例如：如何使用 Python 进行数据分析、2024 年 AI 发展趋势、微信小程序开发指南...",
             height=100,
             key="topic_input"
         )
 
     with col2:
+        # 根据预设主题自动选择文章类型
+        template_options = [
+            ("general", "通用文章"),
+            ("techTutorial", "技术教程"),
+            ("newsAnalysis", "资讯解读"),
+            ("opinion", "观点评论"),
+            ("productPromo", "产品推广")
+        ]
+        default_index = next((i for i, (val, _) in enumerate(template_options) if val == preset_template), 0)
         template_type = st.selectbox(
             "📋 文章类型",
-            options=[
-                ("general", "通用文章"),
-                ("techTutorial", "技术教程"),
-                ("newsAnalysis", "资讯解读"),
-                ("opinion", "观点评论"),
-                ("productPromo", "产品推广")
-            ],
+            options=template_options,
             format_func=lambda x: x[1],
+            index=default_index,
             key="template_input"
         )
 
     custom_requirements = st.text_area(
         "💡 特殊要求（可选）",
+        value=preset_requirements,
         placeholder="例如：字数控制在 2000 字以内、需要包含代码示例、语气要幽默风趣...",
         height=80,
         key="requirements_input"
@@ -672,6 +717,7 @@ def download_markdown(article: GeneratedArticle):
 
 def download_html(article: GeneratedArticle):
     """提供 HTML 下载（微信公众号格式）"""
+    theme_color = get_wechat_templates().get(st.session_state.wechat_theme, {}).get("theme_color", "#1E88E5")
     html_content = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -679,7 +725,7 @@ def download_html(article: GeneratedArticle):
     <title>{article.title}</title>
 </head>
 <body>
-    {markdown_to_wechat_html(article.content)}
+    {markdown_to_wechat_html(article.content, theme_color)}
 </body>
 </html>"""
 
@@ -702,17 +748,39 @@ def main():
         st.warning(f"⚠️ 请先在侧边栏配置 {platform} API Key")
         st.stop()
 
-    # 页面选择
+    # 检查是否有跳转标志（从热点追踪跳转）
+    if st.session_state.get('go_to_writer'):
+        st.session_state.go_to_writer = False
+        main_writer()
+        return
+
+    # 页面选择 - 侧边栏导航
+    page_options = ["✍️ 写文章", "🔥 热点追踪", "📚 历史记录", "⏰ 定时任务"]
+
+    # 如果有预设主题或 URL 参数，默认选择写文章页面
+    default_index = 0
+    query_params = st.query_params.to_dict()
+    if st.session_state.get('topic') or query_params.get('page') == 'write':
+        default_index = 0  # 写文章页面
+        # 清除 URL 参数
+        if 'page' in query_params:
+            del st.query_params['page']
+
     page = st.sidebar.radio(
         "导航",
-        ["✍️ 写文章", "📚 历史记录"],
-        index=0
+        page_options,
+        index=default_index
     )
 
+    # 执行对应页面函数
     if page == "✍️ 写文章":
         main_writer()
-    else:
+    elif page == "🔥 热点追踪":
+        show_hot_topics()
+    elif page == "📚 历史记录":
         show_history()
+    else:
+        show_scheduler()
 
 
 def main_writer():
@@ -729,6 +797,12 @@ def main_writer():
     if step == 1:
         result = step1_input_topic()
         topic, template_type, custom_requirements = result
+
+        # 如果有预设主题（从热点追踪跳转），覆盖输入
+        if hasattr(st.session_state, 'topic') and st.session_state.topic:
+            topic = st.session_state.topic
+            template_type = st.session_state.get('template_type', 'newsAnalysis')
+            custom_requirements = st.session_state.get('custom_requirements', '')
 
         # 保存当前输入到 session
         st.session_state.topic = topic
@@ -872,6 +946,259 @@ def show_history():
 
     except Exception as e:
         st.error(f"加载历史记录失败：{str(e)}")
+
+
+def show_hot_topics():
+    """显示热点追踪页面"""
+    st.markdown("## 🔥 热点追踪")
+    st.markdown("实时获取各平台热门话题，帮你快速捕捉写作灵感")
+
+    # 获取热点数据
+    tracker = get_tracker()
+
+    # 缓存控制（30 分钟内不重复获取）
+    now = datetime.now()
+    last_fetch = st.session_state.get("hot_topics_last_fetch")
+    hot_topics = st.session_state.get("hot_topics")
+
+    force_refresh = st.button("🔄 刷新热点", help="手动刷新热点数据")
+
+    if force_refresh or last_fetch is None or (now - last_fetch).seconds > 1800:
+        with st.spinner("正在获取热点数据..."):
+            hot_topics = tracker.get_all_hot_topics(limit_per_platform=10)
+            st.session_state.hot_topics = hot_topics
+            st.session_state.hot_topics_last_fetch = now
+            st.rerun()
+
+    if not hot_topics:
+        st.warning("暂无热点数据，请点击刷新按钮")
+        return
+
+    # 显示各平台热点
+    platform_tabs = st.tabs(list(hot_topics.keys()))
+
+    for i, (platform, topics) in enumerate(hot_topics.items()):
+        with platform_tabs[i]:
+            st.markdown(f"### {platform} 热搜榜")
+
+            for topic in topics:
+                col1, col2 = st.columns([5, 1])
+                with col1:
+                    rank_icon = "🥇" if topic.rank == 1 else "🥈" if topic.rank == 2 else "🥉" if topic.rank == 3 else f"#{topic.rank}"
+                    hot_text = f" · 🔥 {topic.hot_value}" if topic.hot_value else ""
+                    # 显示标题（移除 Markdown 链接，因为 Streamlit 不支持外部链接）
+                    st.markdown(f"**{rank_icon} {topic.title}**{hot_text}")
+                    if topic.summary:
+                        st.caption(topic.summary[:80] + "..." if len(topic.summary) > 80 else topic.summary)
+                    # 显示可点击的链接
+                    if topic.url:
+                        st.markdown(f"<a href='{topic.url}' target='_blank' style='font-size:12px;color:#666;'>🔗 查看详情</a>", unsafe_allow_html=True)
+                with col2:
+                    # 一键生成文章按钮
+                    if st.button("✍️ 写文章", key=f"write_{platform}_{topic.rank}"):
+                        # 保存主题到 session
+                        st.session_state.topic = topic.title
+                        st.session_state.template_type = "newsAnalysis"
+                        st.session_state.current_step = 1
+                        # 清空热点数据
+                        st.session_state.hot_topics = None
+                        st.session_state.hot_topics_last_fetch = None
+                        # 设置跳转标志
+                        st.session_state.go_to_writer = True
+                        st.rerun()
+                st.divider()
+
+
+def show_scheduler():
+    """显示定时任务页面"""
+    st.markdown("## ⏰ 定时任务")
+    st.markdown("设置定时任务，自动根据热点生成文章或定时发布")
+
+    scheduler = get_scheduler()
+
+    # 任务列表
+    tasks = scheduler.list_tasks()
+
+    # 创建新任务表单
+    with st.expander("➕ 创建新任务", expanded=len(tasks) == 0):
+        with st.form("create_task_form"):
+            task_name = st.text_input("任务名称", placeholder="例如：每日 AI 新闻早报")
+
+            task_type = st.selectbox(
+                "任务类型",
+                options=["generate_article", "publish_article"],
+                format_func=lambda x: "自动生成文章" if x == "generate_article" else "自动发布文章"
+            )
+
+            col1, col2 = st.columns(2)
+            with col1:
+                schedule_type = st.selectbox(
+                    "执行频率",
+                    options=["daily", "weekly", "hourly", "custom"],
+                    format_func=lambda x: {"daily": "每天", "weekly": "每周", "hourly": "每小时", "custom": "自定义"}.get(x, x)
+                )
+
+            with col2:
+                if schedule_type == "daily":
+                    hour = st.number_input("执行时间（时）", min_value=0, max_value=23, value=9)
+                    cron_expr = f"0 {hour} * * *"
+                elif schedule_type == "weekly":
+                    weekday = st.selectbox("星期几", options=[0, 1, 2, 3, 4, 5, 6], format_func=lambda x: f"星期{x + 1}" if x > 0 else "周日")
+                    hour = st.number_input("执行时间（时）", min_value=0, max_value=23, value=9)
+                    cron_expr = f"0 {hour} * * {weekday}"
+                elif schedule_type == "hourly":
+                    minute = st.number_input("执行分钟", min_value=0, max_value=59, value=0)
+                    cron_expr = f"{minute} * * * *"
+                else:
+                    cron_expr = st.text_input("Cron 表达式", placeholder="* * * * * (分 时 日 月 周)")
+
+            # 任务参数
+            st.markdown("**任务参数**")
+            topic_source = st.radio(
+                "主题来源",
+                options=["fixed", "hot_topic"],
+                format_func=lambda x: "固定主题" if x == "fixed" else "根据热点"
+            )
+
+            if topic_source == "fixed":
+                fixed_topic = st.text_input("固定主题", placeholder="例如：AI 技术发展最新动态")
+                task_params = {
+                    "topic": fixed_topic,
+                    "template_type": "newsAnalysis"
+                }
+            else:
+                hot_platform = st.selectbox("热点平台", options=["微博", "知乎", "百度", "抖音"])
+                hot_rank = st.slider("获取排名", min_value=1, max_value=10, value=1)
+                task_params = {
+                    "topic": "hot_topic",
+                    "template_type": "newsAnalysis",
+                    "platform": hot_platform,
+                    "rank": hot_rank
+                }
+
+            submitted = st.form_submit_button("创建任务", type="primary", use_container_width=True)
+
+            if submitted:
+                if task_name and cron_expr:
+                    task_id = scheduler.create_task(
+                        name=task_name,
+                        task_type=task_type,
+                        cron_expression=cron_expr,
+                        parameters=task_params
+                    )
+                    st.success(f"任务创建成功！ID: {task_id}")
+                    st.rerun()
+                else:
+                    st.error("请填写完整的任务信息")
+
+    # 显示任务列表
+    if tasks:
+        st.markdown(f"### 已创建任务 ({len(tasks)}个)")
+
+        for task in tasks:
+            with st.expander(f"**{task.name}** - {task.task_type}", expanded=False):
+                status = "🟢 已启用" if task.enabled else "🔴 已禁用"
+                st.markdown(f"**状态**: {status}")
+                st.markdown(f"**Cron 表达式**: `{task.cron_expression}`")
+                st.markdown(f"**上次执行**: {task.last_run or '尚未执行'}")
+                st.markdown(f"**下次执行**: {task.next_run or '未设置'}")
+
+                # 操作按钮
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    if st.button("⏯️ 切换状态" if task.enabled else "▶️ 启用", key=f"toggle_{task.id}", use_container_width=True):
+                        scheduler.toggle_task(task.id)
+                        st.rerun()
+                with col2:
+                    if st.button("📝 编辑", key=f"edit_{task.id}", use_container_width=True):
+                        # 这里可以添加编辑功能
+                        st.info("编辑功能开发中...")
+                with col3:
+                    if st.button("🗑️ 删除", key=f"delete_{task.id}", use_container_width=True):
+                        scheduler.delete_task(task.id)
+                        st.rerun()
+                with col4:
+                    if st.button("▶️ 立即执行", key=f"run_{task.id}", use_container_width=True):
+                        # 立即执行一次任务
+                        callback = scheduler._callbacks.get(task.task_type)
+                        if callback:
+                            try:
+                                asyncio.run(callback(**task.parameters))
+                                st.success("任务执行成功！")
+                            except Exception as e:
+                                st.error(f"执行失败：{e}")
+
+                # 执行历史
+                history = scheduler.get_task_history(task.id, limit=5)
+                if history:
+                    st.markdown("**最近执行记录**")
+                    for record in history:
+                        icon = "✅" if record["status"] == "success" else "❌"
+                        st.caption(f"{icon} {record['executed_at']} - 耗时 {record['duration']:.2f}s")
+    else:
+        st.info("暂无定时任务")
+
+
+# 注册任务回调
+def _generate_article_callback(topic: str, template_type: str = "newsAnalysis", **kwargs):
+    """定时任务：生成文章的回调"""
+    import os
+    import json
+    from pathlib import Path
+    from app.generator import ArticleGenerator
+    from app.hot_topics import get_tracker
+
+    # 调试：直接读取配置文件
+    config_file = Path("data/config.json")
+    with open(config_file, 'r', encoding='utf-8') as f:
+        config = json.load(f)
+
+    current_platform = config.get("current_platform", "通义千问")
+    platform_config = config.get("platforms", {}).get(current_platform, {})
+    model = platform_config.get("model_name", "qwen3.5-plus")
+    api_key = platform_config.get("api_key", "")
+    base_url = platform_config.get("base_url", "")
+
+    print(f"DEBUG: platform={current_platform}, model={model}")
+
+    # 如果没有配置，尝试从环境变量获取
+    if not api_key:
+        api_key = os.getenv("DASHSCOPE_API_KEY", "")
+
+    # 创建生成器
+    generator = ArticleGenerator(
+        api_key=api_key,
+        base_url=base_url,
+        model=model
+    )
+
+    # 如果是热点主题，先获取热点
+    if topic == "hot_topic":
+        tracker = get_tracker()
+        hot_platform = kwargs.get("platform", "微博")
+        rank = kwargs.get("rank", 1)
+        topics = tracker.get_all_hot_topics(limit_per_platform=rank + 1)
+        if hot_platform in topics and len(topics[hot_platform]) >= rank:
+            topic = topics[hot_platform][rank - 1].title
+        else:
+            topic = "AI 技术最新发展"
+
+    # 生成文章
+    article = asyncio.run(generator.generate_article(topic, template_type=template_type, save=True))
+    return f"文章已生成：{article.title}"
+
+
+# 初始化时注册回调
+def _register_scheduler_callbacks():
+    """注册调度器回调函数"""
+    scheduler = get_scheduler()
+    scheduler.register_callback("generate_article", _generate_article_callback)
+
+
+# 在初始化 session state 时注册回调
+if "scheduler_callbacks_registered" not in st.session_state:
+    _register_scheduler_callbacks()
+    st.session_state.scheduler_callbacks_registered = True
 
 
 if __name__ == "__main__":

@@ -16,7 +16,17 @@
       "Bash(xargs -I {} python -c \"import os; os.system\\(''''taskkill /F /PID {}''''\\)\")",
       "Bash(git init:*)",
       "Bash(git remote:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git tag:*)",
+      "Bash(powershell \"Stop-Process -Id 25448 -Force\")",
+      "Bash(powershell \"Get-Process streamlit | Stop-Process -Force\")",
+      "Bash(tasklist)",
+      "Bash(findstr streamlit:*)",
+      "Bash(chcp 65001)",
+      "Bash(find . -name \"*.pyc\" -delete)",
+      "Bash(find . -name \"__pycache__\" -type d -exec rm -rf {} +)"
     ]
   }
 }
