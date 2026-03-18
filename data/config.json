@@ -1,0 +1,43 @@
+{
+  "model_name": "qwen-max-longcontext",
+  "api_key": "sk-sp-95d0e632d1bc44adacbc59a32c0e2c44",
+  "custom_models": [
+    "qwen3.5-plus"
+  ],
+  "removed_models": [
+    "qwen-plus",
+    "qwen-turbo",
+    "qwen-max"
+  ],
+  "current_platform": "自定义平台",
+  "platforms": {
+    "OpenAI": {
+      "model_name": "gpt-4o"
+    },
+    "通义千问": {
+      "model_name": "qwen3.5-plus",
+      "api_key": "sk-sp-95d0e632d1bc44adacbc59a32c0e2c44",
+      "removed_models": [
+        "qwen-plus",
+        "qwen-turbo",
+        "qwen-max",
+        "qwen-max-longcontext",
+        "qwen-long"
+      ],
+      "custom_models": [
+        "qwen3.5-plus"
+      ]
+    },
+    "智谱 AI": {
+      "model_name": "glm-4"
+    },
+    "自定义平台": {
+      "api_key": "sk-yvylhpweccjyqqqwjqunavddqkelxebjjsspnbsdzanpbufk",
+      "base_url": "https://api.siliconflow.cn/v1",
+      "custom_models": [
+        "Pro/zai-org/GLM-5"
+      ],
+      "model_name": "Pro/zai-org/GLM-5"
+    }
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Bash(mkdir -p data output)",
+      "Bash(pip install:*)",
+      "Bash(cd:*)",
+      "Bash(streamlit run:*)",
+      "Bash(pkill -f 'streamlit run')",
+      "Bash(netstat -ano)",
+      "Bash(findstr :8601)",
+      "Bash(taskkill:*)",
+      "Bash(cmd /c \"taskkill /PID 38364 /F\")",
+      "Bash(python:*)",
+      "Bash(xargs -I {} cmd /c 'taskkill /F /PID {}')",
+      "Bash(xargs -I {} python -c \"import os; os.system\\(''''taskkill /F /PID {}''''\\)\")",
+      "Bash(git init:*)",
+      "Bash(git remote:*)",
+      "Bash(git add:*)"
+    ]
+  }
+}

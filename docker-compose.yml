@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  wechat-writer:
+    build: .
+    ports:
+      - "8601:8601"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./output:/app/output
+    restart: unless-stopped
