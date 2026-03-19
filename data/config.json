@@ -39,5 +39,9 @@
       ],
       "model_name": "Pro/zai-org/GLM-5"
     }
+  },
+  "wechat": {
+    "app_id": "wxf759bba7d160e41e",
+    "app_secret": "ffddb131ff7f4774a7756ce45f5ffff0"
   }
 }

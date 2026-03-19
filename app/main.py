@@ -829,13 +829,50 @@ def sync_to_wechat_draft(article: GeneratedArticle):
             theme_color = get_wechat_templates().get(st.session_state.wechat_theme, {}).get("theme_color", "#1E88E5")
             html_content = markdown_to_wechat_html(article.content, theme_color)
 
+            # 上传一个默认封面图（使用微信官方提供的默认素材或占位图）
+            # 由于无法自动从文章内容提取图片，使用一个在线占位图
+            thumb_media_id = None
+            try:
+                # 创建一个简单的封面图（纯色图片）
+                import base64
+                from io import BytesIO
+                from PIL import Image
+
+                # 创建一个 640x320 的蓝色占位图
+                img = Image.new('RGB', (640, 320), color=(30, 136, 229))
+                buffer = BytesIO()
+                img.save(buffer, format='JPEG')
+                buffer.seek(0)
+
+                # 临时保存文件
+                import tempfile
+                with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as f:
+                    f.write(buffer.getvalue())
+                    temp_img_path = f.name
+
+                try:
+                    # 上传永久素材获取 thumb_media_id
+                    result = wechat_api.upload_permanent_media(temp_img_path, media_type="image")
+                    thumb_media_id = result.get("media_id")
+                    st.caption(f"✅ 上传封面图成功，media_id: {thumb_media_id}")
+                except Exception as img_error:
+                    st.caption(f"⚠️ 上传封面图失败：{str(img_error)}，尝试使用默认方式")
+                finally:
+                    # 清理临时文件
+                    import os
+                    if os.path.exists(temp_img_path):
+                        os.unlink(temp_img_path)
+            except ImportError:
+                st.caption("⚠️ PIL 库未安装，无法生成封面图")
+
             # 调用保存到草稿箱 API
             result = wechat_api.add_draft(
                 title=article.title,
                 content=html_content,
                 author="",
                 digest=article.subtitle or "",
-                show_cover=True
+                show_cover=True,
+                thumb_media_id=thumb_media_id  # 使用上传的封面图或 None
             )
 
             if result.get("errcode", 1) == 0:
