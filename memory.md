@@ -116,8 +116,8 @@ markdown_files    -- Markdown 文件记录
 ```
 
 ### Git 信息
-- 最新提交：`50dbcce` - feat: 新增微信公众号草稿箱同步功能
-- 版本 Tag：`v2.1`、`v2.0`、`refactor-unified-db-20260319`、`v1.0`
+- 最新提交：`4f481ca` - feat: 文件管理页面增加同步到公众号功能
+- 版本 Tag：`v2.2`、`v2.1`、`v2.0`、`refactor-unified-db-20260319`、`v1.0`
 - 仓库：https://github.com/difeizheng/wechat_auto_writer.git
 
 ### 下一步工作
@@ -140,6 +140,23 @@ markdown_files    -- Markdown 文件记录
 ---
 
 ## 更新记录
+
+### v2.2 (2026-03-19) - 文件管理页面同步功能
+
+**新增功能**:
+
+1. **文件管理页面同步到公众号**
+   - 新增"📱 同步到公众号"区域
+   - 点击按钮直接将 Markdown 文件同步到草稿箱
+   - 自动提取 Markdown 标题（第一个 # 标题）
+   - 自动提取摘要（正文前 120 字符）
+   - 同步成功后显示 media_id
+
+**修改的文件**:
+- `app/main.py` - 新增 sync_file_to_wechat 函数，修改文件管理页面 UI
+- `app/models.py` - MarkdownFile 模型新增 wechat_media_id 字段
+
+---
 
 ### v2.1 (2026-03-19) - 微信公众号草稿箱同步
 
