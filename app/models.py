@@ -24,8 +24,9 @@ class Article(Base):
     template_type = Column(String(50), default="general")
     content = Column(Text, nullable=False)
     outline = Column(JSON, nullable=True)
-    status = Column(String(20), default="draft")  # draft, published, archived
+    status = Column(String(20), default="draft")  # draft, published, archived, synced
     file_path = Column(String(500), nullable=True)
+    wechat_media_id = Column(String(100), nullable=True)  # 微信公众号草稿 media_id
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
     published_at = Column(DateTime, nullable=True)
@@ -44,6 +45,7 @@ class Article(Base):
             "outline": self.outline,
             "status": self.status,
             "file_path": self.file_path,
+            "wechat_media_id": self.wechat_media_id,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "published_at": self.published_at.isoformat() if self.published_at else None
         }

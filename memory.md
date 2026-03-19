@@ -62,6 +62,13 @@
    - 保存、删除、下载文件
    - 从定时任务执行记录跳转到文件查看
 
+10. **微信公众号草稿箱同步** (2026-03-19 新增)
+    - 侧边栏配置公众号 AppID 和 AppSecret
+    - 文章生成后一键同步到草稿箱
+    - 定时任务支持自动同步选项
+    - 自动转换 Markdown 为微信公众号 HTML 格式
+    - 数据库记录 wechat_media_id 字段
+
 ### 技术栈
 - 前端：Streamlit 1.32.0
 - AI：OpenAI SDK 兼容模式 (支持多平台)
@@ -109,21 +116,64 @@ markdown_files    -- Markdown 文件记录
 ```
 
 ### Git 信息
-- 最新提交：`dcc5bbb` - 修复定时任务模型名称读取问题
-- Tag：`fix-scheduler-model-20260319`
+- 最新提交：`ab555c9` - 重构：统一数据库并新增 Markdown 文件管理功能
+- 版本 Tag：`v2.0`、`refactor-unified-db-20260319`
 - 仓库：https://github.com/difeizheng/wechat_auto_writer.git
 
 ### 下一步工作
 - [ ] 添加更多排版主题模板
 - [ ] 优化热点追踪成功率（备用 API）
 - [ ] 定时任务邮件通知
-- [ ] 微信公众号直接发布集成
+- [ ] 定时任务参数编辑功能（目前显示"开发中"）
+- [ ] 文件管理批量操作（批量删除）
+- [ ] 更新 README.md 文档
+- [ ] 微信公众号正式发布集成（目前仅支持草稿箱）
 
 ### 注意事项
 - 需要在侧边栏配置 API Key 才能使用
 - 每个平台的配置独立保存
 - 自定义平台需要输入 Base URL 和至少一个模型名称
 - Streamlit 1.32.0 不支持 `st.switch_page`、`st.Page` 等新版 API
+- 数据库已统一为 `data/articles.db`（包含所有表）
+- 文件管理页面采用两列布局，支持搜索过滤
+
+---
+
+## 更新记录
+
+### v2.0 (2026-03-19) - 架构重构与功能增强
+
+**重构内容**：
+
+1. **统一数据库**
+   - 将 `articles.db` 和 `scheduler.db` 合并为统一数据库
+   - 使用 SQLAlchemy ORM 替代原生 sqlite3
+   - 新增表：`TaskHistory`、`MarkdownFile`、`ScheduledTask`
+
+2. **新增文件管理模块** (`app/file_manager.py`)
+   - `FileManager` 类：扫描、读取、保存、删除 Markdown 文件
+   - `sync_to_database()`：同步文件列表到数据库
+
+3. **新增 Markdown 浏览/编辑页面**
+   - 两列布局：左侧文件列表（25%），右侧内容区域（75%）
+   - 浏览模式：Markdown 渲染预览
+   - 编辑模式：在线编辑并保存
+   - 支持搜索过滤、下载、删除文件
+
+4. **定时任务执行记录增强**
+   - 记录生成文件的路径 (`file_path`)
+   - 显示"📄 查看"按钮，点击跳转到文件管理页面
+   - 使用 `get_latest_history()` 获取包含任务名称的执行记录
+
+5. **数据库迁移脚本** (`scripts/migrate_db.py`)
+   - 将旧 `scheduler.db` 数据迁移到 `articles.db`
+
+**修改的文件**：
+- `app/models.py` - 新增模型，统一数据库
+- `app/scheduler.py` - 改用 SQLAlchemy
+- `app/main.py` - 新增 `show_markdown_viewer()`，修改执行记录显示
+- `app/file_manager.py` - 新增文件管理模块
+- `scripts/migrate_db.py` - 新增迁移脚本
 
 ---
 
@@ -169,39 +219,3 @@ def _generate_article_callback(topic: str, template_type: str = "newsAnalysis", 
 
 **验证方式**：
 - 执行定时任务，检查是否正确使用配置文件中保存的模型名称
-
----
-
-## 2026-03-19: 架构重构与功能增强
-
-### 重构内容
-
-1. **统一数据库**
-   - 将 `articles.db` 和 `scheduler.db` 合并为统一数据库
-   - 使用 SQLAlchemy ORM 替代原生 sqlite3
-   - 新增表：`TaskHistory`、`MarkdownFile`
-
-2. **新增文件管理模块** (`app/file_manager.py`)
-   - `FileManager` 类：扫描、读取、保存、删除 Markdown 文件
-   - `sync_to_database()`：同步文件列表到数据库
-
-3. **新增 Markdown 浏览/编辑页面**
-   - 侧边栏显示文件列表
-   - 浏览模式：Markdown 渲染预览
-   - 编辑模式：在线编辑并保存
-   - 支持下载、删除文件
-
-4. **定时任务执行记录增强**
-   - 记录生成文件的路径 (`file_path`)
-   - 显示"查看"按钮，点击跳转到文件管理页面
-   - 使用 `get_latest_history()` 获取包含任务名称的执行记录
-
-5. **数据库迁移脚本** (`scripts/migrate_db.py`)
-   - 将旧 `scheduler.db` 数据迁移到 `articles.db`
-
-### 修改的文件
-- `app/models.py` - 新增模型，统一数据库
-- `app/scheduler.py` - 改用 SQLAlchemy
-- `app/main.py` - 新增 `show_markdown_viewer()`，修改执行记录显示
-- `app/file_manager.py` - 新增文件管理模块
-- `scripts/migrate_db.py` - 新增迁移脚本

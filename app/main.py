@@ -15,7 +15,7 @@ sys.path.insert(0, str(project_root))
 
 from app.generator import ArticleGenerator, GeneratedArticle, ArticleOutline
 from app.models import init_db, get_session, Article
-from app.wechat import markdown_to_wechat_html, get_wechat_templates
+from app.wechat import markdown_to_wechat_html, get_wechat_templates, WeChatAPI
 from app.hot_topics import get_tracker, format_topics_for_prompt, HotTopic
 from app.scheduler import get_scheduler, init_scheduler
 from app.file_manager import get_file_manager, FileManager
@@ -199,6 +199,24 @@ def save_removed_models(models: list, platform: str = None):
     save_platform_config(platform, platform_config)
 
 
+def load_wechat_config() -> dict:
+    """从配置文件加载微信公众号配置"""
+    config = load_config()
+    return config.get("wechat", {})
+
+
+def save_wechat_config(app_id: str = None, app_secret: str = None):
+    """保存微信公众号配置"""
+    config = load_config()
+    if "wechat" not in config:
+        config["wechat"] = {}
+    if app_id is not None:
+        config["wechat"]["app_id"] = app_id
+    if app_secret is not None:
+        config["wechat"]["app_secret"] = app_secret
+    save_config(config)
+
+
 def get_available_models(platform: str = None) -> tuple:
     """获取可用模型列表"""
     if platform is None:
@@ -282,6 +300,14 @@ def init_session_state():
     # 排版主题配置
     if "wechat_theme" not in st.session_state:
         st.session_state.wechat_theme = "default"
+
+    # 微信公众号配置
+    if "wechat_app_id" not in st.session_state:
+        st.session_state.wechat_app_id = load_wechat_config().get("app_id", "")
+    if "wechat_app_secret" not in st.session_state:
+        st.session_state.wechat_app_secret = load_wechat_config().get("app_secret", "")
+    if "sync_to_wechat" not in st.session_state:
+        st.session_state.sync_to_wechat = False
 
     # 热点话题缓存
     if "hot_topics" not in st.session_state:
@@ -518,6 +544,42 @@ def sidebar_config():
 
         st.divider()
 
+        # 微信公众号配置
+        st.subheader("📱 公众号配置")
+
+        # AppID 配置
+        wechat_app_id = st.text_input(
+            "公众号 AppID",
+            value=st.session_state.wechat_app_id,
+            placeholder="wx...",
+            help="微信公众号后台获取 AppID"
+        )
+        if wechat_app_id:
+            st.session_state.wechat_app_id = wechat_app_id
+            save_wechat_config(app_id=wechat_app_id)
+
+        # AppSecret 配置
+        wechat_app_secret = st.text_input(
+            "公众号 AppSecret",
+            value=st.session_state.wechat_app_secret,
+            type="password",
+            placeholder="API 密钥",
+            help="微信公众号后台获取 AppSecret"
+        )
+        if wechat_app_secret:
+            st.session_state.wechat_app_secret = wechat_app_secret
+            save_wechat_config(app_secret=wechat_app_secret)
+
+        # 清除配置按钮
+        if st.session_state.wechat_app_id or st.session_state.wechat_app_secret:
+            if st.button("🗑️ 清除公众号配置", use_container_width=True):
+                st.session_state.wechat_app_id = ""
+                st.session_state.wechat_app_secret = ""
+                save_wechat_config(app_id="", app_secret="")
+                st.rerun()
+
+        st.divider()
+
         # 快捷操作
         st.header("📁 快捷操作")
 
@@ -658,7 +720,7 @@ def step3_preview_article(article: GeneratedArticle):
 
     # 操作按钮
     st.markdown("### 操作")
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
 
     with col1:
         download_markdown(article)
@@ -676,6 +738,11 @@ def step3_preview_article(article: GeneratedArticle):
             st.session_state.generated_article = None
             st.session_state.current_step = 1
             st.rerun()
+
+    with col5:
+        # 同步到公众号草稿箱按钮
+        if st.button("📱 同步到草稿箱", use_container_width=True, help="需要配置公众号 AppID 和 AppSecret"):
+            sync_to_wechat_draft(article)
 
     # 保存到数据库
     if st.button("💾 保存到历史记录"):
@@ -736,6 +803,63 @@ def download_html(article: GeneratedArticle):
         file_name=f"{article.title}.html",
         mime="text/html"
     )
+
+
+def sync_to_wechat_draft(article: GeneratedArticle):
+    """同步文章到微信公众号草稿箱"""
+    # 检查是否配置了公众号信息
+    app_id = st.session_state.wechat_app_id
+    app_secret = st.session_state.wechat_app_secret
+
+    if not app_id or not app_secret:
+        st.error("请先在侧边栏配置公众号 AppID 和 AppSecret")
+        st.info("配置路径：侧边栏 → 📱 公众号配置")
+        return
+
+    try:
+        with st.spinner("正在同步到公众号草稿箱..."):
+            # 创建 WeChat API 实例
+            wechat_api = WeChatAPI(app_id=app_id, app_secret=app_secret)
+
+            # 获取访问令牌
+            token = wechat_api._get_access_token()
+            st.caption("✅ 获取访问令牌成功")
+
+            # 将 Markdown 转换为微信公众号 HTML 格式
+            theme_color = get_wechat_templates().get(st.session_state.wechat_theme, {}).get("theme_color", "#1E88E5")
+            html_content = markdown_to_wechat_html(article.content, theme_color)
+
+            # 调用保存到草稿箱 API
+            result = wechat_api.add_draft(
+                title=article.title,
+                content=html_content,
+                author="",
+                digest=article.subtitle or "",
+                show_cover=True
+            )
+
+            if result.get("errcode", 1) == 0:
+                media_id = result.get("media_id", "")
+                st.success(f"✅ 同步成功！草稿 media_id: `{media_id}`")
+                st.info("📱 请登录微信公众号后台查看草稿箱")
+
+                # 更新数据库记录
+                try:
+                    session = get_session()
+                    # 查找最近的文章记录并更新
+                    latest_article = session.query(Article).order_by(Article.created_at.desc()).first()
+                    if latest_article and latest_article.title == article.title:
+                        latest_article.wechat_media_id = media_id
+                        latest_article.status = "synced"
+                        session.commit()
+                        session.close()
+                except Exception as e:
+                    st.caption(f"数据库更新失败：{str(e)}")
+            else:
+                st.error(f"❌ 同步失败：{result.get('errmsg', '未知错误')}")
+
+    except Exception as e:
+        st.error(f"同步失败：{str(e)}")
 
 
 def main():
@@ -1262,6 +1386,15 @@ def show_scheduler():
                     "rank": hot_rank
                 }
 
+            # 同步到公众号选项
+            st.markdown("**同步设置**")
+            sync_to_wechat = st.checkbox(
+                "同步到微信公众号草稿箱",
+                value=False,
+                help="需要先在侧边栏配置公众号 AppID 和 AppSecret"
+            )
+            task_params["sync_to_wechat"] = sync_to_wechat
+
             submitted = st.form_submit_button("创建任务", type="primary", use_container_width=True)
 
             if submitted:
@@ -1392,14 +1525,21 @@ def show_scheduler():
 
 
 # 注册任务回调
-def _generate_article_callback(topic: str, template_type: str = "newsAnalysis", **kwargs):
-    """定时任务：生成文章的回调"""
+def _generate_article_callback(topic: str, template_type: str = "newsAnalysis", sync_to_wechat: bool = False, **kwargs):
+    """定时任务：生成文章的回调
+
+    Args:
+        topic: 文章主题
+        template_type: 文章类型
+        sync_to_wechat: 是否同步到微信公众号草稿箱
+    """
     import os
     import json
     from pathlib import Path
     from app.generator import ArticleGenerator
     from app.hot_topics import get_tracker
     from app.models import get_session, Article, TaskHistory
+    from app.wechat import WeChatAPI, markdown_to_wechat_html
 
     # 直接读取配置文件
     config_file = Path("data/config.json")
@@ -1411,6 +1551,11 @@ def _generate_article_callback(topic: str, template_type: str = "newsAnalysis", 
     model = platform_config.get("model_name", "qwen3.5-plus")
     api_key = platform_config.get("api_key", "")
     base_url = platform_config.get("base_url", "")
+
+    # 微信公众号配置
+    wechat_config = config.get("wechat", {})
+    wechat_app_id = wechat_config.get("app_id", "")
+    wechat_app_secret = wechat_config.get("app_secret", "")
 
     print(f"DEBUG: platform={current_platform}, model={model}")
 
@@ -1434,6 +1579,8 @@ def _generate_article_callback(topic: str, template_type: str = "newsAnalysis", 
     asyncio.set_event_loop(loop)
     file_path = None
     article_id = None
+    wechat_media_id = None
+    wechat_sync_result = None
 
     try:
         generator = ArticleGenerator(
@@ -1446,15 +1593,14 @@ def _generate_article_callback(topic: str, template_type: str = "newsAnalysis", 
         )
         print(f"任务执行成功：文章已生成 - {article.title}")
 
-        # 获取生成的文件路径（从 generator 中获取）
-        # 由于 save=True 已经保存了文件，我们需要获取最后保存的文件路径
+        # 获取生成的文件路径
         output_dir = Path("output")
         if output_dir.exists():
             files = sorted(output_dir.glob("*.md"), key=lambda x: x.stat().st_mtime, reverse=True)
             if files:
                 file_path = str(files[0])
 
-        # 同步到数据库（创建 Article 记录）
+        # 同步到数据库
         try:
             session = get_session()
             db_article = Article(
@@ -1475,7 +1621,44 @@ def _generate_article_callback(topic: str, template_type: str = "newsAnalysis", 
             session.commit()
             article_id = db_article.id
 
-            # 更新最新的 TaskHistory 记录，关联 article_id 和 file_path
+            # 如果配置了公众号且要求同步，执行同步操作
+            if sync_to_wechat and wechat_app_id and wechat_app_secret:
+                try:
+                    print(f"正在同步到微信公众号草稿箱...")
+                    wechat_api = WeChatAPI(app_id=wechat_app_id, app_secret=wechat_app_secret)
+
+                    # 获取访问令牌
+                    token = wechat_api._get_access_token()
+
+                    # 转换 HTML 格式
+                    theme_color = "#1E88E5"  # 默认蓝色
+                    html_content = markdown_to_wechat_html(article.content, theme_color)
+
+                    # 保存到草稿箱
+                    result = wechat_api.add_draft(
+                        title=article.title,
+                        content=html_content,
+                        author="",
+                        digest=article.subtitle or "",
+                        show_cover=True
+                    )
+
+                    if result.get("errcode", 1) == 0:
+                        wechat_media_id = result.get("media_id", "")
+                        wechat_sync_result = f"草稿箱同步成功，media_id: {wechat_media_id}"
+                        # 更新文章记录
+                        db_article.wechat_media_id = wechat_media_id
+                        db_article.status = "synced"
+                        session.commit()
+                        print(f"微信公众号同步成功：{wechat_media_id}")
+                    else:
+                        wechat_sync_result = f"草稿箱同步失败：{result.get('errmsg', '未知错误')}"
+                        print(f"微信公众号同步失败：{result}")
+                except Exception as wechat_error:
+                    wechat_sync_result = f"草稿箱同步异常：{str(wechat_error)}"
+                    print(f"微信公众号同步异常：{wechat_error}")
+
+            # 更新最新的 TaskHistory 记录
             latest_history = session.query(TaskHistory).order_by(TaskHistory.executed_at.desc()).first()
             if latest_history and latest_history.file_path is None:
                 latest_history.file_path = file_path
@@ -1490,11 +1673,16 @@ def _generate_article_callback(topic: str, template_type: str = "newsAnalysis", 
         loop.close()
 
     # 返回包含 file_path 的字典
-    return {
+    result_dict = {
         "message": f"文章已生成：{article.title}",
         "file_path": file_path,
         "article_id": article_id
     }
+
+    if wechat_sync_result:
+        result_dict["message"] += f"; {wechat_sync_result}"
+
+    return result_dict
 
 
 # 初始化时注册回调

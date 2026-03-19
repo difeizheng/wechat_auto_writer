@@ -140,26 +140,141 @@ class WeChatAPI:
         else:
             raise Exception(f"发布文章失败：{result}")
 
-    def send_preview(
+    def add_draft(
         self,
-        media_id: str,
-        to_user: str
+        title: str,
+        content: str,
+        cover_media_id: Optional[str] = None,
+        author: Optional[str] = None,
+        digest: Optional[str] = None,
+        show_cover: bool = True,
+        thumb_media_id: Optional[str] = None
     ) -> dict:
         """
-        发送预览给用户
+        保存到草稿箱
+        参考：https://developers.weixin.qq.com/doc/offiaccount/Draft_Box/Add_draft.html
+
+        Args:
+            title: 文章标题
+            content: 文章内容（HTML 格式）
+            cover_media_id: 封面图片 media_id（可选）
+            author: 作者（可选）
+            digest: 摘要（可选）
+            show_cover: 是否显示封面 (1/0)
+            thumb_media_id: 缩略图 media_id（必填）
+
+        Returns:
+            {"media_id": "xxxxx", "errcode": 0, "errmsg": "ok"}
         """
         token = self._get_access_token()
-        url = f"https://api.weixin.qq.com/cgi-bin/message/custom/send"
-
-        data = {
-            "touser": to_user,
-            "msgtype": "mpnews",
-            "mpnews": {
-                "media_id": media_id
-            }
-        }
+        url = "https://api.weixin.qq.com/cgi-bin/draft/add"
 
         params = {"access_token": token}
+
+        # 构建文章数据
+        article_data = {
+            "title": title,
+            "author": author or "",
+            "digest": digest or "",
+            "content": content,  # 已经是 HTML 格式
+            "show_cover": 1 if show_cover else 0
+        }
+
+        # 缩略图 media_id 是必填的
+        if thumb_media_id:
+            article_data["thumb_media_id"] = thumb_media_id
+        elif cover_media_id:
+            article_data["thumb_media_id"] = cover_media_id
+
+        data = {
+            "articles": [article_data]
+        }
+
+        response = requests.post(url, json=data, params=params)
+        result = response.json()
+
+        if result.get("errcode", 0) == 0:
+            return result
+        else:
+            raise Exception(f"保存到草稿箱失败：{result}")
+
+    def update_draft(
+        self,
+        media_id: str,
+        index: int = 0,
+        title: Optional[str] = None,
+        content: Optional[str] = None,
+        author: Optional[str] = None,
+        digest: Optional[str] = None,
+        show_cover: Optional[int] = None
+    ) -> dict:
+        """
+        修改草稿箱文章
+        参考：https://developers.weixin.qq.com/doc/offiaccount/Draft_Box/Update_draft.html
+        """
+        token = self._get_access_token()
+        url = "https://api.weixin.qq.com/cgi-bin/draft/update"
+
+        params = {"access_token": token}
+
+        data = {
+            "media_id": media_id,
+            "index": index  # 多篇图文时指定第几篇，从 0 开始
+        }
+
+        if title is not None:
+            data["title"] = title
+        if content is not None:
+            data["content"] = content
+        if author is not None:
+            data["author"] = author
+        if digest is not None:
+            data["digest"] = digest
+        if show_cover is not None:
+            data["show_cover"] = show_cover
+
+        response = requests.post(url, json=data, params=params)
+        result = response.json()
+
+        if result.get("errcode", 0) == 0:
+            return result
+        else:
+            raise Exception(f"修改草稿失败：{result}")
+
+    def delete_draft(self, media_id: str) -> dict:
+        """
+        删除草稿
+        """
+        token = self._get_access_token()
+        url = "https://api.weixin.qq.com/cgi-bin/draft/delete"
+
+        params = {
+            "access_token": token,
+            "media_id": media_id
+        }
+
+        response = requests.post(url, json={"media_id": media_id}, params=params)
+        result = response.json()
+
+        if result.get("errcode", 0) == 0:
+            return result
+        else:
+            raise Exception(f"删除草稿失败：{result}")
+
+    def get_draft_list(self, offset: int = 0, count: int = 20, no_content: int = 0) -> dict:
+        """
+        获取草稿列表
+        """
+        token = self._get_access_token()
+        url = "https://api.weixin.qq.com/cgi-bin/draft/batchget"
+
+        params = {"access_token": token}
+        data = {
+            "offset": offset,
+            "count": count,
+            "no_content": no_content  # 是否返回内容 (0/1)
+        }
+
         response = requests.post(url, json=data, params=params)
         return response.json()
 
