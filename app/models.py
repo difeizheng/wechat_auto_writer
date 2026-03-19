@@ -101,6 +101,7 @@ class MarkdownFile(Base):
     modified_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
     related_article_id = Column(Integer, ForeignKey('articles.id'), nullable=True)
     related_task_id = Column(Integer, ForeignKey('task_history.id'), nullable=True)
+    wechat_media_id = Column(String(100), nullable=True)  # 微信公众号草稿 media_id
 
     def to_dict(self):
         return {
@@ -112,7 +113,8 @@ class MarkdownFile(Base):
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "modified_at": self.modified_at.isoformat() if self.modified_at else None,
             "related_article_id": self.related_article_id,
-            "related_task_id": self.related_task_id
+            "related_task_id": self.related_task_id,
+            "wechat_media_id": self.wechat_media_id
         }
 
 

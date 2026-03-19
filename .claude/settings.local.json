@@ -27,7 +27,9 @@
       "Bash(chcp 65001)",
       "Bash(find . -name \"*.pyc\" -delete)",
       "Bash(find . -name \"__pycache__\" -type d -exec rm -rf {} +)",
-      "Bash(sqlite3:*)"
+      "Bash(sqlite3:*)",
+      "Bash(powershell \"Stop-Process -Id 41340 -Force\")",
+      "Bash(powershell \"Stop-Process -Id 30156 -Force\")"
     ]
   }
 }

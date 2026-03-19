@@ -829,11 +829,21 @@ def sync_to_wechat_draft(article: GeneratedArticle):
             theme_color = get_wechat_templates().get(st.session_state.wechat_theme, {}).get("theme_color", "#1E88E5")
             html_content = markdown_to_wechat_html(article.content, theme_color)
 
-            # 上传一个默认封面图（使用微信官方提供的默认素材或占位图）
-            # 由于无法自动从文章内容提取图片，使用一个在线占位图
+            # 微信公众号标题长度限制：最多 64 个字符
+            wechat_title = article.title
+            if len(wechat_title) > 64:
+                wechat_title = wechat_title[:61] + "..."
+                st.caption(f"⚠️ 标题过长 ({len(article.title)}字符)，已截断为 64 字符")
+
+            # 摘要长度限制：最多 120 字符（或 360 字节）
+            wechat_digest = article.subtitle or ""
+            if len(wechat_digest) > 120:
+                wechat_digest = wechat_digest[:117] + "..."
+                st.caption(f"⚠️ 摘要过长 ({len(article.subtitle or '')}字符)，已截断为 120 字符")
+
+            # 上传封面图获取 thumb_media_id
             thumb_media_id = None
             try:
-                # 创建一个简单的封面图（纯色图片）
                 import base64
                 from io import BytesIO
                 from PIL import Image
@@ -856,7 +866,7 @@ def sync_to_wechat_draft(article: GeneratedArticle):
                     thumb_media_id = result.get("media_id")
                     st.caption(f"✅ 上传封面图成功，media_id: {thumb_media_id}")
                 except Exception as img_error:
-                    st.caption(f"⚠️ 上传封面图失败：{str(img_error)}，尝试使用默认方式")
+                    st.caption(f"⚠️ 上传封面图失败：{str(img_error)}")
                 finally:
                     # 清理临时文件
                     import os
@@ -867,12 +877,12 @@ def sync_to_wechat_draft(article: GeneratedArticle):
 
             # 调用保存到草稿箱 API
             result = wechat_api.add_draft(
-                title=article.title,
+                title=wechat_title,  # 使用处理后的标题
                 content=html_content,
                 author="",
-                digest=article.subtitle or "",
+                digest=wechat_digest,  # 使用处理后的摘要
                 show_cover=True,
-                thumb_media_id=thumb_media_id  # 使用上传的封面图或 None
+                thumb_media_id=thumb_media_id
             )
 
             if result.get("errcode", 1) == 0:
@@ -883,13 +893,132 @@ def sync_to_wechat_draft(article: GeneratedArticle):
                 # 更新数据库记录
                 try:
                     session = get_session()
-                    # 查找最近的文章记录并更新
                     latest_article = session.query(Article).order_by(Article.created_at.desc()).first()
                     if latest_article and latest_article.title == article.title:
                         latest_article.wechat_media_id = media_id
                         latest_article.status = "synced"
                         session.commit()
                         session.close()
+                except Exception as e:
+                    st.caption(f"数据库更新失败：{str(e)}")
+            else:
+                st.error(f"❌ 同步失败：{result.get('errmsg', '未知错误')}")
+
+    except Exception as e:
+        st.error(f"同步失败：{str(e)}")
+
+
+def sync_file_to_wechat(file_path: str, content: str):
+    """同步 Markdown 文件到微信公众号草稿箱
+
+    Args:
+        file_path: Markdown 文件路径
+        content: Markdown 内容
+    """
+    import re
+
+    # 检查是否配置了公众号信息
+    app_id = st.session_state.wechat_app_id
+    app_secret = st.session_state.wechat_app_secret
+
+    if not app_id or not app_secret:
+        st.error("请先在侧边栏配置公众号 AppID 和 AppSecret")
+        st.info("配置路径：侧边栏 → 📱 公众号配置")
+        return
+
+    try:
+        with st.spinner("正在同步到公众号草稿箱..."):
+            # 创建 WeChat API 实例
+            wechat_api = WeChatAPI(app_id=app_id, app_secret=app_secret)
+
+            # 获取访问令牌
+            token = wechat_api._get_access_token()
+            st.caption("✅ 获取访问令牌成功")
+
+            # 从 Markdown 内容中提取标题
+            lines = content.split('\n')
+            title = ""
+            for line in lines:
+                if line.startswith('# '):
+                    title = line[2:].strip()
+                    break
+
+            # 如果没有找到标题，使用文件名
+            if not title:
+                title = Path(file_path).stem
+
+            # 将 Markdown 转换为微信公众号 HTML 格式
+            theme_color = get_wechat_templates().get(st.session_state.wechat_theme, {}).get("theme_color", "#1E88E5")
+            html_content = markdown_to_wechat_html(content, theme_color)
+
+            # 微信公众号标题长度限制：最多 64 个字符
+            wechat_title = title
+            if len(wechat_title) > 64:
+                wechat_title = wechat_title[:61] + "..."
+                st.caption(f"⚠️ 标题过长 ({len(title)}字符)，已截断为 64 字符")
+
+            # 提取摘要（取正文前 200 字符）
+            text_content = re.sub(r'[!#*`\[\]\(\)]', '', content)  # 移除 Markdown 符号
+            text_content = re.sub(r'\n+', '\n', text_content).strip()
+            wechat_digest = text_content[:120].replace('\n', ' ') if text_content else ""
+
+            # 上传封面图获取 thumb_media_id
+            thumb_media_id = None
+            try:
+                from io import BytesIO
+                from PIL import Image
+
+                # 创建一个 640x320 的蓝色占位图
+                img = Image.new('RGB', (640, 320), color=(30, 136, 229))
+                buffer = BytesIO()
+                img.save(buffer, format='JPEG')
+                buffer.seek(0)
+
+                # 临时保存文件
+                import tempfile
+                with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as f:
+                    f.write(buffer.getvalue())
+                    temp_img_path = f.name
+
+                try:
+                    # 上传永久素材获取 thumb_media_id
+                    result = wechat_api.upload_permanent_media(temp_img_path, media_type="image")
+                    thumb_media_id = result.get("media_id")
+                    st.caption(f"✅ 上传封面图成功，media_id: {thumb_media_id}")
+                except Exception as img_error:
+                    st.caption(f"⚠️ 上传封面图失败：{str(img_error)}")
+                finally:
+                    # 清理临时文件
+                    import os
+                    if os.path.exists(temp_img_path):
+                        os.unlink(temp_img_path)
+            except ImportError:
+                st.caption("⚠️ PIL 库未安装，无法生成封面图")
+
+            # 调用保存到草稿箱 API
+            result = wechat_api.add_draft(
+                title=wechat_title,
+                content=html_content,
+                author="",
+                digest=wechat_digest,
+                show_cover=True,
+                thumb_media_id=thumb_media_id
+            )
+
+            if result.get("errcode", 1) == 0:
+                media_id = result.get("media_id", "")
+                st.success(f"✅ 同步成功！草稿 media_id: `{media_id}`")
+                st.info("📱 请登录微信公众号后台查看草稿箱")
+
+                # 更新 MarkdownFile 记录
+                try:
+                    session = get_session()
+                    from app.models import MarkdownFile
+                    md_file = session.query(MarkdownFile).filter(MarkdownFile.file_path == file_path).first()
+                    if md_file:
+                        md_file.wechat_media_id = media_id
+                        session.commit()
+                    session.close()
                 except Exception as e:
                     st.caption(f"数据库更新失败：{str(e)}")
             else:
@@ -1287,6 +1416,20 @@ def show_markdown_viewer():
             mime="text/markdown",
             use_container_width=True
         )
+
+        # 同步到公众号按钮
+        st.markdown("---")
+        st.markdown("### 📱 同步到公众号")
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("📱 同步到草稿箱", use_container_width=True, type="primary"):
+                sync_file_to_wechat(selected_file, content)
+        with col2:
+            # 显示同步状态
+            if file_info.get('wechat_media_id'):
+                st.success(f"已同步：{file_info.get('wechat_media_id')[:10]}...")
+            else:
+                st.caption("尚未同步")
 
     # 同步到数据库（隐藏功能，放在底部）
     with st.expander("🔄 数据库同步"):
