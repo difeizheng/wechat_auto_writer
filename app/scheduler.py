@@ -1,93 +1,43 @@
 """
 定时任务调度模块
 支持定时生成文章、定时发布等任务
+使用 SQLAlchemy 统一数据库
 """
-import sqlite3
 import json
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional, Callable
-from dataclasses import dataclass, asdict
 from pathlib import Path
 import schedule
 
-
-@dataclass
-class ScheduledTask:
-    """定时任务数据类"""
-    id: Optional[int]
-    name: str
-    task_type: str  # "generate_article", "publish_article"
-    cron_expression: str  # 简单 cron 格式：* * * * * (分 时 日 月 周)
-    parameters: dict  # 任务参数
-    enabled: bool
-    last_run: Optional[str]
-    next_run: Optional[str]
-    created_at: str
-    updated_at: str
+from app.models import get_session, ScheduledTask, TaskHistory
 
 
 class TaskScheduler:
     """任务调度器"""
 
-    def __init__(self, db_path: str = "data/scheduler.db"):
-        self.db_path = db_path
+    def __init__(self):
         self._lock = threading.Lock()
         self._running = False
         self._thread = None
         self._callbacks: dict[str, Callable] = {}
-        self._init_db()
         self._load_tasks()
-
-    def _init_db(self):
-        """初始化数据库"""
-        Path(self.db_path).parent.mkdir(exist_ok=True)
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS scheduled_tasks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                task_type TEXT NOT NULL,
-                cron_expression TEXT NOT NULL,
-                parameters TEXT NOT NULL,
-                enabled INTEGER DEFAULT 1,
-                last_run TEXT,
-                next_run TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-        """)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS task_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                task_id INTEGER NOT NULL,
-                status TEXT NOT NULL,
-                result TEXT,
-                executed_at TEXT NOT NULL,
-                duration REAL,
-                FOREIGN KEY (task_id) REFERENCES scheduled_tasks(id)
-            )
-        """)
-        conn.commit()
-        conn.close()
 
     def _load_tasks(self):
         """加载已启用的任务并注册到调度器"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, name, cron_expression FROM scheduled_tasks WHERE enabled = 1")
-        rows = cursor.fetchall()
-        conn.close()
+        session = get_session()
+        try:
+            tasks = session.query(ScheduledTask).filter(ScheduledTask.enabled == 1).all()
 
-        # 清除所有已注册的 job
-        schedule.clear()
+            # 清除所有已注册的 job
+            schedule.clear()
 
-        # 重新注册启用的任务
-        for row in rows:
-            task_id, name, cron_expr = row
-            self._schedule_task(task_id, cron_expr)
+            # 重新注册启用的任务
+            for task in tasks:
+                self._schedule_task(task.id, task.cron_expression)
+        finally:
+            session.close()
 
     def _schedule_task(self, task_id: int, cron_expression: str):
         """根据 cron 表达式调度任务"""
@@ -121,32 +71,26 @@ class TaskScheduler:
         try:
             # 简化处理：只支持部分 cron 语法
             if minute == "*" and hour == "*":
-                # 每分钟
                 return schedule.every(1).minutes.do(
                     self._run_task, task_id=task_id, callback=callback, params=parameters
                 )
             elif minute == "*/5" and hour == "*":
-                # 每 5 分钟
                 return schedule.every(5).minutes.do(
                     self._run_task, task_id=task_id, callback=callback, params=parameters
                 )
             elif minute == "*/15" and hour == "*":
-                # 每 15 分钟
                 return schedule.every(15).minutes.do(
                     self._run_task, task_id=task_id, callback=callback, params=parameters
                 )
             elif minute == "0" and hour == "*":
-                # 每小时
                 return schedule.every().hour.do(
                     self._run_task, task_id=task_id, callback=callback, params=parameters
                 )
             elif minute != "*" and minute.isdigit() and hour == "*":
-                # 每小时固定分钟
                 return schedule.every(minute).minutes.do(
                     self._run_task, task_id=task_id, callback=callback, params=parameters
                 )
             elif minute.isdigit() and hour.isdigit():
-                # 每天固定时间
                 if minute == "0":
                     return schedule.every().day.at(f"{hour}:00").do(
                         self._run_task, task_id=task_id, callback=callback, params=parameters
@@ -156,7 +100,6 @@ class TaskScheduler:
                         self._run_task, task_id=task_id, callback=callback, params=parameters
                     )
             elif weekday != "*":
-                # 每周固定时间
                 weekdays = {"0": "sunday", "1": "monday", "2": "tuesday", "3": "wednesday",
                            "4": "thursday", "5": "friday", "6": "saturday"}
                 if weekday in weekdays and hour.isdigit():
@@ -170,7 +113,6 @@ class TaskScheduler:
                             self._run_task, task_id=task_id, callback=callback, params=parameters
                         )
             else:
-                # 默认：每天固定时间
                 if hour.isdigit():
                     return schedule.every().day.at(f"{hour}:00").do(
                         self._run_task, task_id=task_id, callback=callback, params=parameters
@@ -184,10 +126,15 @@ class TaskScheduler:
         start_time = time.time()
         status = "success"
         result = ""
+        file_path = None
 
         try:
             print(f"执行任务 {task_id}...")
+            # 回调函数现在会返回 file_path
             result = callback(**params)
+            if isinstance(result, dict) and "file_path" in result:
+                file_path = result["file_path"]
+                result = result.get("message", "success")
         except Exception as e:
             status = "failed"
             result = str(e)
@@ -195,11 +142,11 @@ class TaskScheduler:
 
         duration = time.time() - start_time
 
-        # 记录执行历史
-        self._log_task_history(task_id, status, result, duration)
+        # 记录执行历史（包含 file_path）
+        self._log_task_history(task_id, status, result, duration, file_path)
 
         # 更新上次运行时间
-        self._update_task_last_run(task_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        self._update_task_last_run(task_id)
 
     def register_callback(self, task_type: str, callback: Callable):
         """注册任务类型的回调函数"""
@@ -207,117 +154,85 @@ class TaskScheduler:
 
     def create_task(self, name: str, task_type: str, cron_expression: str, parameters: dict) -> int:
         """创建新任务"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        session = get_session()
+        try:
+            now = datetime.now()
+            task = ScheduledTask(
+                name=name,
+                task_type=task_type,
+                cron_expression=cron_expression,
+                parameters=parameters,
+                enabled=1,
+                created_at=now,
+                updated_at=now
+            )
+            session.add(task)
+            session.commit()
+            task_id = task.id
 
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        cursor.execute("""
-            INSERT INTO scheduled_tasks
-            (name, task_type, cron_expression, parameters, enabled, created_at, updated_at)
-            VALUES (?, ?, ?, ?, 1, ?, ?)
-        """, (name, task_type, cron_expression, json.dumps(parameters, ensure_ascii=False), now, now))
+            # 重新加载任务
+            self._schedule_task(task_id, cron_expression)
 
-        task_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
-
-        # 重新加载任务
-        self._schedule_task(task_id, cron_expression)
-
-        return task_id
+            return task_id
+        finally:
+            session.close()
 
     def get_task(self, task_id: int) -> Optional[ScheduledTask]:
         """获取任务详情"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM scheduled_tasks WHERE id = ?", (task_id,))
-        row = cursor.fetchone()
-        conn.close()
-
-        if not row:
-            return None
-
-        return ScheduledTask(
-            id=row[0],
-            name=row[1],
-            task_type=row[2],
-            cron_expression=row[3],
-            parameters=json.loads(row[4]),
-            enabled=bool(row[5]),
-            last_run=row[6],
-            next_run=row[7],
-            created_at=row[8],
-            updated_at=row[9]
-        )
+        session = get_session()
+        try:
+            return session.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
+        finally:
+            session.close()
 
     def list_tasks(self) -> list[ScheduledTask]:
         """获取所有任务列表"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM scheduled_tasks ORDER BY created_at DESC")
-        rows = cursor.fetchall()
-        conn.close()
-
-        tasks = []
-        for row in rows:
-            tasks.append(ScheduledTask(
-                id=row[0],
-                name=row[1],
-                task_type=row[2],
-                cron_expression=row[3],
-                parameters=json.loads(row[4]),
-                enabled=bool(row[5]),
-                last_run=row[6],
-                next_run=row[7],
-                created_at=row[8],
-                updated_at=row[9]
-            ))
-        return tasks
+        session = get_session()
+        try:
+            tasks = session.query(ScheduledTask).order_by(ScheduledTask.created_at.desc()).all()
+            return tasks
+        finally:
+            session.close()
 
     def update_task(self, task_id: int, **kwargs):
         """更新任务"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        session = get_session()
+        try:
+            task = session.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
+            if not task:
+                return
 
-        allowed_fields = ["name", "cron_expression", "parameters", "enabled"]
-        updates = []
-        values = []
+            allowed_fields = ["name", "cron_expression", "parameters", "enabled"]
 
-        for field, value in kwargs.items():
-            if field in allowed_fields:
-                if field == "parameters":
-                    value = json.dumps(value, ensure_ascii=False)
-                elif field == "enabled":
-                    value = 1 if value else 0
-                updates.append(f"{field} = ?")
-                values.append(value)
+            for field, value in kwargs.items():
+                if field in allowed_fields:
+                    if field == "parameters":
+                        value = value  # 已经是 dict
+                    elif field == "enabled":
+                        value = 1 if value else 0
+                    setattr(task, field, value)
 
-        if updates:
-            values.append(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-            values.append(task_id)
-            cursor.execute(f"""
-                UPDATE scheduled_tasks
-                SET {', '.join(updates)}, updated_at = ?
-                WHERE id = ?
-            """, values)
+            task.updated_at = datetime.now()
+            session.commit()
 
-            conn.commit()
-
-        conn.close()
-
-        # 重新加载任务
-        self._load_tasks()
+            # 重新加载任务
+            self._load_tasks()
+        finally:
+            session.close()
 
     def delete_task(self, task_id: int):
         """删除任务"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM scheduled_tasks WHERE id = ?", (task_id,))
-        conn.commit()
-        conn.close()
+        session = get_session()
+        try:
+            task = session.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
+            if task:
+                session.delete(task)
+                session.commit()
 
-        # 重新加载任务
-        self._load_tasks()
+            # 重新加载任务
+            self._load_tasks()
+        finally:
+            session.close()
 
     def toggle_task(self, task_id: int):
         """启用/禁用任务"""
@@ -325,51 +240,105 @@ class TaskScheduler:
         if task:
             self.update_task(task_id, enabled=not task.enabled)
 
-    def _update_task_last_run(self, task_id: int, last_run: str):
+    def _update_task_last_run(self, task_id: int):
         """更新任务上次运行时间"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute("UPDATE scheduled_tasks SET last_run = ? WHERE id = ?", (last_run, task_id))
-        conn.commit()
-        conn.close()
+        session = get_session()
+        try:
+            task = session.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
+            if task:
+                task.last_run = datetime.now()
+                session.commit()
+        finally:
+            session.close()
 
     def _update_task_next_run(self, task_id: int, next_run: str):
         """更新任务下次运行时间"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute("UPDATE scheduled_tasks SET next_run = ? WHERE id = ?", (next_run, task_id))
-        conn.commit()
-        conn.close()
+        session = get_session()
+        try:
+            task = session.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
+            if task:
+                task.next_run = datetime.strptime(next_run, "%Y-%m-%d %H:%M:%S")
+                session.commit()
+        finally:
+            session.close()
 
-    def _log_task_history(self, task_id: int, status: str, result: str, duration: float):
+    def _log_task_history(self, task_id: int, status: str, result: str, duration: float, file_path: str = None):
         """记录任务执行历史"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO task_history (task_id, status, result, executed_at, duration)
-            VALUES (?, ?, ?, ?, ?)
-        """, (task_id, status, result, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), duration))
-        conn.commit()
-        conn.close()
+        session = get_session()
+        try:
+            history = TaskHistory(
+                task_id=task_id,
+                status=status,
+                result=result,
+                executed_at=datetime.now(),
+                duration=duration,
+                file_path=file_path
+            )
+            session.add(history)
+            session.commit()
+        finally:
+            session.close()
 
-    def get_task_history(self, task_id: int, limit: int = 10) -> list[dict]:
+    def get_task_history(self, task_id: int = None, limit: int = 10) -> list[dict]:
         """获取任务执行历史"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT status, result, executed_at, duration
-            FROM task_history
-            WHERE task_id = ?
-            ORDER BY executed_at DESC
-            LIMIT ?
-        """, (task_id, limit))
-        rows = cursor.fetchall()
-        conn.close()
+        session = get_session()
+        try:
+            if task_id is None:
+                # 获取所有任务的历史记录
+                histories = session.query(TaskHistory).order_by(TaskHistory.executed_at.desc()).limit(limit).all()
+                return [
+                    {
+                        "task_id": h.task_id,
+                        "status": h.status,
+                        "result": h.result,
+                        "executed_at": h.executed_at.strftime("%Y-%m-%d %H:%M:%S"),
+                        "duration": h.duration,
+                        "file_path": h.file_path
+                    }
+                    for h in histories
+                ]
+            else:
+                # 获取指定任务的历史记录
+                histories = session.query(TaskHistory).filter(
+                    TaskHistory.task_id == task_id
+                ).order_by(TaskHistory.executed_at.desc()).limit(limit).all()
+                return [
+                    {
+                        "status": h.status,
+                        "result": h.result,
+                        "executed_at": h.executed_at.strftime("%Y-%m-%d %H:%M:%S"),
+                        "duration": h.duration,
+                        "file_path": h.file_path
+                    }
+                    for h in histories
+                ]
+        finally:
+            session.close()
 
-        return [
-            {"status": row[0], "result": row[1], "executed_at": row[2], "duration": row[3]}
-            for row in rows
-        ]
+    def get_latest_history(self, limit: int = 10) -> list[dict]:
+        """获取最新的执行记录（包含任务名称）"""
+        session = get_session()
+        try:
+            histories = session.query(TaskHistory).order_by(TaskHistory.executed_at.desc()).limit(limit).all()
+            result = []
+            for h in histories:
+                task_name = ""
+                if h.task_id:
+                    task = session.query(ScheduledTask).filter(ScheduledTask.id == h.task_id).first()
+                    if task:
+                        task_name = task.name
+                result.append({
+                    "task_id": h.task_id,
+                    "task_name": task_name,
+                    "status": h.status,
+                    "result": h.result,
+                    "executed_at": h.executed_at.strftime("%Y-%m-%d %H:%M:%S"),
+                    "duration": h.duration,
+                    "file_path": h.file_path
+                })
+            return result
+        finally:
+            session.close()
 
     def start(self):
         """启动调度器"""

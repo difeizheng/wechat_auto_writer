@@ -18,6 +18,7 @@ from app.models import init_db, get_session, Article
 from app.wechat import markdown_to_wechat_html, get_wechat_templates
 from app.hot_topics import get_tracker, format_topics_for_prompt, HotTopic
 from app.scheduler import get_scheduler, init_scheduler
+from app.file_manager import get_file_manager, FileManager
 
 
 # 页面配置
@@ -755,21 +756,35 @@ def main():
         return
 
     # 页面选择 - 侧边栏导航
-    page_options = ["✍️ 写文章", "🔥 热点追踪", "📚 历史记录", "⏰ 定时任务"]
+    page_options = ["✍️ 写文章", "🔥 热点追踪", "📚 历史记录", "📁 文件管理", "⏰ 定时任务"]
+    page_to_index = {
+        "write": 0,
+        "hot_topics": 1,
+        "history": 2,
+        "viewer": 3,  # 文件管理页面
+        "scheduler": 4
+    }
 
     # 如果有预设主题或 URL 参数，默认选择写文章页面
     default_index = 0
     query_params = st.query_params.to_dict()
-    if st.session_state.get('topic') or query_params.get('page') == 'write':
+
+    # 检查 page 参数，设置正确的默认索引
+    if query_params.get('page') == 'viewer':
+        default_index = 3  # 文件管理页面
+    elif st.session_state.get('topic') or query_params.get('page') == 'write':
         default_index = 0  # 写文章页面
         # 清除 URL 参数
         if 'page' in query_params:
             del st.query_params['page']
 
+    # 检查是否有 page 参数（用于从执行记录跳转）
+    current_page = query_params.get('page', '')
+
     page = st.sidebar.radio(
         "导航",
         page_options,
-        index=default_index
+        index=min(default_index, len(page_options) - 1)
     )
 
     # 执行对应页面函数
@@ -779,6 +794,8 @@ def main():
         show_hot_topics()
     elif page == "📚 历史记录":
         show_history()
+    elif page == "📁 文件管理":
+        show_markdown_viewer()
     else:
         show_scheduler()
 
@@ -946,6 +963,175 @@ def show_history():
 
     except Exception as e:
         st.error(f"加载历史记录失败：{str(e)}")
+
+
+def show_markdown_viewer():
+    """Markdown 文件浏览/编辑器"""
+    st.markdown("## 📁 文件管理")
+    st.markdown("浏览和管理 output 目录的 Markdown 文件")
+
+    file_manager = get_file_manager()
+
+    # 扫描文件列表
+    files = file_manager.scan_output_directory()
+
+    if not files:
+        st.info("output 目录暂无 Markdown 文件")
+        return
+
+    # 使用两列布局：左侧文件列表 (25%)，右侧内容区域 (75%)
+    list_col, content_col = st.columns([1, 3])
+
+    # 左侧：文件列表
+    with list_col:
+        st.markdown("### 📂 文件列表")
+        st.caption(f"共 {len(files)} 个文件")
+
+        # 搜索/过滤
+        search_query = st.text_input("🔍 搜索文件", placeholder="输入标题关键词...", key="file_search")
+
+        # 过滤文件
+        filtered_files = files
+        if search_query:
+            filtered_files = [f for f in files if search_query.lower() in f.title.lower()]
+            st.caption(f"找到 {len(filtered_files)} 个结果")
+
+        # 滚动文件列表
+        with st.container():
+            for i, file_info in enumerate(filtered_files):
+                file_label = f"📄 {file_info.title[:18]}..." if len(file_info.title) > 18 else f"📄 {file_info.title}"
+                file_size_kb = file_info.size / 1024
+                size_text = f"{file_size_kb:.1f}KB"
+
+                # 选中样式
+                is_selected = st.session_state.get("selected_file") == file_info.path
+
+                if st.button(
+                    file_label,
+                    key=f"file_{i}_{file_info.path}",
+                    use_container_width=True,
+                    type="primary" if is_selected else "secondary"
+                ):
+                    st.session_state.selected_file = file_info.path
+                    st.rerun()
+
+        st.divider()
+
+        # 批量操作
+        st.markdown("### 🔧 批量操作")
+        if st.button("🔄 刷新列表", use_container_width=True):
+            st.rerun()
+
+        # 删除选中的文件
+        selected_file = st.session_state.get("selected_file")
+        if selected_file:
+            st.markdown("---")
+            if st.button("🗑️ 删除当前文件", type="secondary", use_container_width=True):
+                st.session_state.show_delete_confirm = selected_file
+                st.rerun()
+
+            # 显示删除确认
+            if st.session_state.get("show_delete_confirm") == selected_file:
+                st.warning("确认删除？")
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("确认", use_container_width=True, type="primary"):
+                        if file_manager.delete_file(selected_file):
+                            st.success("已删除")
+                            st.session_state.selected_file = None
+                            st.session_state.show_delete_confirm = None
+                            st.rerun()
+                        else:
+                            st.error("删除失败")
+                with col2:
+                    if st.button("取消", use_container_width=True):
+                        st.session_state.show_delete_confirm = None
+                        st.rerun()
+
+    # 右侧：文件内容区域
+    with content_col:
+        selected_file = st.session_state.get("selected_file")
+
+        if not selected_file:
+            # 默认选择第一个文件
+            if files:
+                selected_file = files[0].path
+                st.session_state.selected_file = selected_file
+            else:
+                st.info("请点击左侧选择一个文件")
+                return
+
+        file_info = file_manager.get_file_info(selected_file)
+        if not file_info:
+            st.error("文件不存在，可能已被删除")
+            st.session_state.selected_file = None
+            st.rerun()
+            return
+
+        # 文件信息头部
+        st.markdown(f"### {file_info.get('title', 'Unknown')}")
+        st.caption(
+            f"📁 {file_info.get('name', 'Unknown')} | "
+            f"📊 {file_info.get('size', 0) / 1024:.1f}KB | "
+            f"🕐 修改：{file_info.get('modified_at', 'Unknown')}"
+        )
+
+        # 读取内容
+        content, html_preview = file_manager.get_content_with_preview(selected_file)
+
+        if not content:
+            st.error("无法读取文件内容")
+            return
+
+        # 浏览/编辑 切换
+        view_mode = st.radio("显示模式", ["📖 浏览", "✏️ 编辑"], horizontal=True, key="view_mode_toggle")
+
+        if view_mode == "📖 浏览":
+            st.markdown("---")
+            # 使用可滚动容器显示内容
+            with st.container():
+                st.markdown(html_preview, unsafe_allow_html=True)
+        else:
+            st.markdown("---")
+            edited_content = st.text_area(
+                "编辑内容",
+                value=content,
+                height=400,
+                label_visibility="collapsed",
+                key="editor_content"
+            )
+
+            # 操作按钮
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                if st.button("💾 保存", use_container_width=True, type="primary"):
+                    if file_manager.save_file(selected_file, edited_content):
+                        st.success("保存成功！")
+                        st.session_state.modified = True
+                        st.rerun()
+                    else:
+                        st.error("保存失败")
+            with col2:
+                if st.button("📋 复制全文", use_container_width=True):
+                    st.code(edited_content, language="markdown")
+                    st.success("已复制到代码块")
+            with col3:
+                pass  # 留空
+
+        # 下载按钮
+        st.download_button(
+            label="⬇️ 下载文件",
+            data=content,
+            file_name=file_info.get('name', 'file.md'),
+            mime="text/markdown",
+            use_container_width=True
+        )
+
+    # 同步到数据库（隐藏功能，放在底部）
+    with st.expander("🔄 数据库同步"):
+        if st.button("同步文件列表到数据库"):
+            file_manager.sync_to_database()
+            st.success("同步完成！")
 
 
 def show_hot_topics():
@@ -1123,10 +1309,40 @@ def show_scheduler():
                         callback = scheduler._callbacks.get(task.task_type)
                         if callback:
                             try:
-                                asyncio.run(callback(**task.parameters))
-                                st.success("任务执行成功！")
+                                # 回调是普通函数，内部自己处理事件循环
+                                result = callback(**task.parameters)
+
+                                # 提取 file_path（如果回调返回字典）
+                                file_path = None
+                                message = "任务执行成功"
+                                if isinstance(result, dict):
+                                    file_path = result.get("file_path")
+                                    message = result.get("message", "任务执行成功")
+
+                                st.success(message)
+
+                                # 记录执行历史（包含 file_path）
+                                scheduler._log_task_history(
+                                    task.id,
+                                    "success",
+                                    message,
+                                    0,
+                                    file_path
+                                )
+
+                                # 更新上次执行时间
+                                scheduler._update_task_last_run(task.id)
+                                st.rerun()
                             except Exception as e:
                                 st.error(f"执行失败：{e}")
+                                # 记录失败历史
+                                scheduler._log_task_history(
+                                    task.id,
+                                    "failed",
+                                    str(e),
+                                    0,
+                                    None
+                                )
 
                 # 执行历史
                 history = scheduler.get_task_history(task.id, limit=5)
@@ -1138,6 +1354,42 @@ def show_scheduler():
     else:
         st.info("暂无定时任务")
 
+    # 显示所有任务的最新执行记录
+    st.markdown("---")
+    st.markdown("### 📊 最新执行记录")
+
+    all_history = scheduler.get_latest_history(limit=10)
+    if all_history:
+        for record in all_history:
+            task_name = record.get("task_name", f"任务 ID:{record['task_id']}")
+            icon = "✅" if record["status"] == "success" else "❌"
+            file_path = record.get("file_path")
+
+            with st.container():
+                col1, col2, col3, col4 = st.columns([3, 2, 1, 1])
+                with col1:
+                    st.markdown(f"**{icon} {task_name}**")
+                with col2:
+                    st.caption(f"{record['executed_at']}")
+                with col3:
+                    st.caption(f"耗时 {record['duration']:.2f}s")
+                with col4:
+                    # 如果有文件路径，显示查看按钮
+                    if file_path:
+                        if st.button("📄 查看", key=f"view_{record.get('executed_at', '')}", use_container_width=True):
+                            st.session_state.selected_file = file_path
+                            st.query_params.page = "viewer"
+                            st.rerun()
+
+                if record.get("result"):
+                    result_text = record.get("result", "")
+                    if len(result_text) > 80:
+                        result_text = result_text[:80] + "..."
+                    st.caption(f"结果：{result_text}")
+                st.divider()
+    else:
+        st.caption("暂无执行记录")
+
 
 # 注册任务回调
 def _generate_article_callback(topic: str, template_type: str = "newsAnalysis", **kwargs):
@@ -1147,8 +1399,9 @@ def _generate_article_callback(topic: str, template_type: str = "newsAnalysis", 
     from pathlib import Path
     from app.generator import ArticleGenerator
     from app.hot_topics import get_tracker
+    from app.models import get_session, Article, TaskHistory
 
-    # 调试：直接读取配置文件
+    # 直接读取配置文件
     config_file = Path("data/config.json")
     with open(config_file, 'r', encoding='utf-8') as f:
         config = json.load(f)
@@ -1165,13 +1418,6 @@ def _generate_article_callback(topic: str, template_type: str = "newsAnalysis", 
     if not api_key:
         api_key = os.getenv("DASHSCOPE_API_KEY", "")
 
-    # 创建生成器
-    generator = ArticleGenerator(
-        api_key=api_key,
-        base_url=base_url,
-        model=model
-    )
-
     # 如果是热点主题，先获取热点
     if topic == "hot_topic":
         tracker = get_tracker()
@@ -1183,9 +1429,72 @@ def _generate_article_callback(topic: str, template_type: str = "newsAnalysis", 
         else:
             topic = "AI 技术最新发展"
 
-    # 生成文章
-    article = asyncio.run(generator.generate_article(topic, template_type=template_type, save=True))
-    return f"文章已生成：{article.title}"
+    # 创建新事件循环执行异步任务
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    file_path = None
+    article_id = None
+
+    try:
+        generator = ArticleGenerator(
+            api_key=api_key,
+            base_url=base_url,
+            model=model
+        )
+        article = loop.run_until_complete(
+            generator.generate_article(topic, template_type=template_type, save=True, model=model)
+        )
+        print(f"任务执行成功：文章已生成 - {article.title}")
+
+        # 获取生成的文件路径（从 generator 中获取）
+        # 由于 save=True 已经保存了文件，我们需要获取最后保存的文件路径
+        output_dir = Path("output")
+        if output_dir.exists():
+            files = sorted(output_dir.glob("*.md"), key=lambda x: x.stat().st_mtime, reverse=True)
+            if files:
+                file_path = str(files[0])
+
+        # 同步到数据库（创建 Article 记录）
+        try:
+            session = get_session()
+            db_article = Article(
+                title=article.title,
+                subtitle=article.subtitle,
+                topic=topic,
+                template_type=template_type,
+                content=article.content,
+                outline={
+                    "sections": article.outline.sections,
+                    "suggested_cover": article.outline.suggested_cover
+                },
+                status="draft",
+                file_path=file_path,
+                created_at=datetime.now()
+            )
+            session.add(db_article)
+            session.commit()
+            article_id = db_article.id
+
+            # 更新最新的 TaskHistory 记录，关联 article_id 和 file_path
+            latest_history = session.query(TaskHistory).order_by(TaskHistory.executed_at.desc()).first()
+            if latest_history and latest_history.file_path is None:
+                latest_history.file_path = file_path
+                latest_history.article_id = article_id
+                session.commit()
+
+            session.close()
+        except Exception as e:
+            print(f"同步数据库失败：{e}")
+
+    finally:
+        loop.close()
+
+    # 返回包含 file_path 的字典
+    return {
+        "message": f"文章已生成：{article.title}",
+        "file_path": file_path,
+        "article_id": article_id
+    }
 
 
 # 初始化时注册回调

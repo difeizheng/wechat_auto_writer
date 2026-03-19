@@ -1,9 +1,9 @@
 # Memory - 公众号文章自动生成系统
 
 ## 项目位置
-`D:\project_room\workspace2024\mytest\public_account\wechat_auto_writer`
+`D:\project_room\workspace2024\mytest\wechat_auto_writer`
 
-## 项目状态 (2026-03-18)
+## 项目状态 (2026-03-19 重构更新)
 
 ### 已完成功能
 
@@ -47,17 +47,25 @@
    - 一键生成热点文章
    - 30 分钟缓存机制
 
-8. **定时任务支持** (2026-03-18 新增)
+8. **定时任务支持** (2026-03-18 新增，2026-03-19 修复并重构)
    - 支持每天/每周/每小时定时执行
    - 支持自定义 Cron 表达式
    - 任务类型：自动生成文章、自动发布文章
    - 支持固定主题或根据热点生成
-   - 任务执行历史记录
+   - 任务执行历史记录（带文件链接）
+   - **修复** (2026-03-19)：定时任务模型名称读取错误问题
+   - **重构** (2026-03-19)：统一数据库，使用 SQLAlchemy
+
+9. **Markdown 文件管理** (2026-03-19 新增)
+   - 浏览 output 目录所有 Markdown 文件
+   - 在线预览和编辑
+   - 保存、删除、下载文件
+   - 从定时任务执行记录跳转到文件查看
 
 ### 技术栈
-- 前端：Streamlit
+- 前端：Streamlit 1.32.0
 - AI：OpenAI SDK 兼容模式 (支持多平台)
-- 数据库：SQLite
+- 数据库：SQLite + SQLAlchemy 2.0
 - 部署：Docker / 本地运行
 
 ### 当前运行状态
@@ -72,12 +80,17 @@ wechat_auto_writer/
 │   ├── __init__.py
 │   ├── main.py              # Streamlit 主界面
 │   ├── generator.py         # AI 文章生成逻辑
-│   ├── models.py            # 数据库模型
-│   └── wechat.py            # 微信公众号 API 封装
+│   ├── models.py            # 数据库模型 (统一数据库)
+│   ├── wechat.py            # 微信公众号 API 封装
+│   ├── hot_topics.py        # 热点追踪功能
+│   ├── scheduler.py         # 定时任务调度器 (SQLAlchemy)
+│   └── file_manager.py      # 文件管理器 (新增)
 ├── data/
-│   ├── articles.db          # SQLite 数据库
-│   └── config.json          # 配置文件 (平台、API Key、模型等)
+│   ├── articles.db          # SQLite 统一数据库
+│   └── config.json          # 配置文件
 ├── output/                  # 生成的文章
+├── scripts/
+│   └── migrate_db.py        # 数据库迁移脚本
 ├── .streamlit/
 │   └── config.toml          # Streamlit 配置
 ├── requirements.txt
@@ -86,6 +99,19 @@ wechat_auto_writer/
 ├── start.bat
 └── README.md
 ```
+
+### 数据库表结构
+```sql
+articles          -- 文章记录
+scheduled_tasks   -- 定时任务
+task_history      -- 任务执行历史
+markdown_files    -- Markdown 文件记录
+```
+
+### Git 信息
+- 最新提交：`dcc5bbb` - 修复定时任务模型名称读取问题
+- Tag：`fix-scheduler-model-20260319`
+- 仓库：https://github.com/difeizheng/wechat_auto_writer.git
 
 ### 下一步工作
 - [ ] 添加更多排版主题模板
@@ -97,3 +123,85 @@ wechat_auto_writer/
 - 需要在侧边栏配置 API Key 才能使用
 - 每个平台的配置独立保存
 - 自定义平台需要输入 Base URL 和至少一个模型名称
+- Streamlit 1.32.0 不支持 `st.switch_page`、`st.Page` 等新版 API
+
+---
+
+## 重要问题修复记录
+
+### 2026-03-19: 定时任务模型名称读取错误
+
+**问题描述**：
+- 用户侧边栏配置使用 `qwen3.5-plus` 模型
+- 执行定时任务时报错：`model qwen-plus is not supported`
+
+**原因分析**：
+- `_generate_article_callback` 函数使用 `st.session_state.current_platform` 读取平台
+- 定时任务在后台线程执行，无法访问 Streamlit 的 session state
+- 导致回退到预设模型的第一个 `qwen-plus`
+
+**修复方案**：
+修改 `app/main.py` 中的 `_generate_article_callback` 函数，直接从配置文件读取：
+
+```python
+def _generate_article_callback(topic: str, template_type: str = "newsAnalysis", **kwargs):
+    import json
+    from pathlib import Path
+
+    # 直接读取配置文件
+    config_file = Path("data/config.json")
+    with open(config_file, 'r', encoding='utf-8') as f:
+        config = json.load(f)
+
+    current_platform = config.get("current_platform", "通义千问")
+    platform_config = config.get("platforms", {}).get(current_platform, {})
+    model = platform_config.get("model_name", "qwen3.5-plus")
+    api_key = platform_config.get("api_key", "")
+    base_url = platform_config.get("base_url", "")
+
+    # 使用读取的配置创建生成器
+    generator = ArticleGenerator(
+        api_key=api_key,
+        base_url=base_url,
+        model=model
+    )
+```
+
+**验证方式**：
+- 执行定时任务，检查是否正确使用配置文件中保存的模型名称
+
+---
+
+## 2026-03-19: 架构重构与功能增强
+
+### 重构内容
+
+1. **统一数据库**
+   - 将 `articles.db` 和 `scheduler.db` 合并为统一数据库
+   - 使用 SQLAlchemy ORM 替代原生 sqlite3
+   - 新增表：`TaskHistory`、`MarkdownFile`
+
+2. **新增文件管理模块** (`app/file_manager.py`)
+   - `FileManager` 类：扫描、读取、保存、删除 Markdown 文件
+   - `sync_to_database()`：同步文件列表到数据库
+
+3. **新增 Markdown 浏览/编辑页面**
+   - 侧边栏显示文件列表
+   - 浏览模式：Markdown 渲染预览
+   - 编辑模式：在线编辑并保存
+   - 支持下载、删除文件
+
+4. **定时任务执行记录增强**
+   - 记录生成文件的路径 (`file_path`)
+   - 显示"查看"按钮，点击跳转到文件管理页面
+   - 使用 `get_latest_history()` 获取包含任务名称的执行记录
+
+5. **数据库迁移脚本** (`scripts/migrate_db.py`)
+   - 将旧 `scheduler.db` 数据迁移到 `articles.db`
+
+### 修改的文件
+- `app/models.py` - 新增模型，统一数据库
+- `app/scheduler.py` - 改用 SQLAlchemy
+- `app/main.py` - 新增 `show_markdown_viewer()`，修改执行记录显示
+- `app/file_manager.py` - 新增文件管理模块
+- `scripts/migrate_db.py` - 新增迁移脚本
