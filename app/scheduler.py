@@ -6,6 +6,9 @@
 import json
 import threading
 import time
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 from typing import Optional, Callable
 from pathlib import Path
@@ -147,6 +150,10 @@ class TaskScheduler:
 
         # 更新上次运行时间
         self._update_task_last_run(task_id)
+
+        # 发送邮件通知（如果配置了）
+        if params.get("email_notification") or params.get("send_email"):
+            self._send_email_notification(task_id, status, result, duration)
 
     def register_callback(self, task_type: str, callback: Callable):
         """注册任务类型的回调函数"""
@@ -339,6 +346,75 @@ class TaskScheduler:
             return result
         finally:
             session.close()
+
+    def _send_email_notification(self, task_id: int, status: str, result: str, duration: float):
+        """发送邮件通知"""
+        import os
+        import json
+        from pathlib import Path
+
+        # 读取邮件配置
+        config_file = Path("data/email_config.json")
+        if not config_file.exists():
+            print("邮件配置不存在，跳过邮件发送")
+            return
+
+        try:
+            with open(config_file, 'r', encoding='utf-8') as f:
+                email_config = json.load(f)
+        except Exception as e:
+            print(f"读取邮件配置失败：{e}")
+            return
+
+        # 获取必填配置
+        smtp_server = email_config.get("smtp_server")
+        smtp_port = email_config.get("smtp_port", 587)
+        sender_email = email_config.get("sender_email")
+        sender_password = email_config.get("sender_password")
+        recipient_emails = email_config.get("recipient_emails", [])
+        task_name = email_config.get("task_name", "定时任务")
+
+        if not all([smtp_server, sender_email, sender_password, recipient_emails]):
+            print("邮件配置不完整，跳过邮件发送")
+            return
+
+        # 构建邮件内容
+        subject = f"[{task_name}] 执行{'成功' if status == 'success' else '失败'} - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+
+        status_icon = "✅" if status == "success" else "❌"
+        body = f"""
+<html>
+<body>
+    <h2>{status_icon} 定时任务执行通知</h2>
+    <p><strong>任务名称</strong>: {task_name}</p>
+    <p><strong>执行状态</strong>: {'成功' if status == 'success' else '失败'}</p>
+    <p><strong>执行时间</strong>: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+    <p><strong>执行耗时</strong>: {duration:.2f}秒</p>
+    <p><strong>执行结果</strong>: {result}</p>
+    <hr>
+    <p style="color: #666; font-size: 12px;">此邮件由系统自动发送，请勿回复。</p>
+</body>
+</html>
+"""
+
+        try:
+            # 创建邮件
+            msg = MIMEMultipart()
+            msg['From'] = sender_email
+            msg['To'] = ', '.join(recipient_emails)
+            msg['Subject'] = subject
+            msg.attach(MIMEText(body, 'html', 'utf-8'))
+
+            # 发送邮件
+            server = smtplib.SMTP(smtp_server, smtp_port)
+            server.starttls()
+            server.login(sender_email, sender_password)
+            server.sendmail(sender_email, recipient_emails, msg.as_string())
+            server.quit()
+
+            print(f"邮件通知发送成功：{recipient_emails}")
+        except Exception as e:
+            print(f"发送邮件失败：{e}")
 
     def start(self):
         """启动调度器"""

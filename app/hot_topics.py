@@ -36,7 +36,7 @@ class HotTopicTracker:
         """
         topics = []
         try:
-            # 使用公开的微博热榜 API
+            # 方案一：使用微博官方 API
             url = "https://weibo.com/ajax/side/hotSearch"
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -64,13 +64,71 @@ class HotTopicTracker:
                             summary=item.get("note", "")[:100] if item.get("note") else None
                         ))
         except Exception as e:
-            print(f"获取微博热搜失败：{e}")
+            print(f"获取微博热搜失败（方案一）：{e}")
 
-        return topics[:limit] if topics else self._get_weibo_hot_search_backup(limit)
+        # 方案一失败，使用备用方案
+        if not topics:
+            topics = self._get_weibo_hot_search_backup(limit)
+
+        return topics[:limit]
 
     def _get_weibo_hot_search_backup(self, limit: int = 10) -> list[HotTopic]:
-        """微博热搜备用获取方案"""
-        return []
+        """微博热搜备用获取方案 - 使用第三方 API"""
+        topics = []
+        try:
+            # 方案二：使用第三方聚合 API
+            url = "https://api.tophub.today/v1/weibo"
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Accept": "application/json"
+            }
+            response = self.session.get(url, headers=headers, timeout=10)
+
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("data") and data["data"].get("list"):
+                    for i, item in enumerate(data["data"]["list"][:limit], 1):
+                        topics.append(HotTopic(
+                            title=item.get("title", ""),
+                            rank=i,
+                            hot_value=item.get("hot", ""),
+                            url=item.get("url", ""),
+                            platform="微博"
+                        ))
+                return topics
+        except Exception as e:
+            print(f"获取微博热搜失败（方案二）：{e}")
+
+        # 方案二也失败，使用方案三
+        return self._get_weibo_hot_search_backup_v2(limit)
+
+    def _get_weibo_hot_search_backup_v2(self, limit: int = 10) -> list[HotTopic]:
+        """微博热搜备用方案二 - 使用另一第三方 API"""
+        topics = []
+        try:
+            # 方案三：使用 another 第三方 API
+            url = "https://tophub.today/api/v2/weibo/real-time"
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Accept": "application/json"
+            }
+            response = self.session.get(url, headers=headers, timeout=10)
+
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("data") and data["data"].get("list"):
+                    for i, item in enumerate(data["data"]["list"][:limit], 1):
+                        topics.append(HotTopic(
+                            title=item.get("title", ""),
+                            rank=i,
+                            hot_value=item.get("hot", ""),
+                            url=item.get("url", ""),
+                            platform="微博"
+                        ))
+        except Exception as e:
+            print(f"获取微博热搜失败（方案三）：{e}")
+
+        return topics[:limit]
 
     def get_zhihu_hot(self, limit: int = 10) -> list[HotTopic]:
         """
@@ -79,7 +137,7 @@ class HotTopicTracker:
         """
         topics = []
         try:
-            # 使用知乎热榜 API（不需要登录的版本）
+            # 方案一：使用知乎热榜官方 API
             url = "https://api.zhihu.com/topstory/hot-lists/total"
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -100,8 +158,38 @@ class HotTopicTracker:
                             platform="知乎",
                             summary=target.get("excerpt", "")[:100] if target.get("excerpt") else None
                         ))
+                return topics
         except Exception as e:
-            print(f"获取知乎热榜失败：{e}")
+            print(f"获取知乎热榜失败（方案一）：{e}")
+
+        # 方案一失败，使用备用方案
+        return self._get_zhihu_hot_backup(limit)
+
+    def _get_zhihu_hot_backup(self, limit: int = 10) -> list[HotTopic]:
+        """知乎热榜备用方案 - 使用第三方 API"""
+        topics = []
+        try:
+            # 方案二：使用第三方聚合 API
+            url = "https://api.tophub.today/v1/zhihu"
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Accept": "application/json"
+            }
+            response = self.session.get(url, headers=headers, timeout=10)
+
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("data") and data["data"].get("list"):
+                    for i, item in enumerate(data["data"]["list"][:limit], 1):
+                        topics.append(HotTopic(
+                            title=item.get("title", ""),
+                            rank=i,
+                            hot_value=item.get("hot", ""),
+                            url=item.get("url", ""),
+                            platform="知乎"
+                        ))
+        except Exception as e:
+            print(f"获取知乎热榜失败（方案二）：{e}")
 
         return topics[:limit]
 
@@ -112,7 +200,7 @@ class HotTopicTracker:
         """
         topics = []
         try:
-            # 尝试使用公开 API
+            # 方案一：尝试使用百度热榜官方 API
             url = "https://top.baidu.com/api/boarddata"
             params = {
                 "boardId": "1",
@@ -137,15 +225,43 @@ class HotTopicTracker:
                             url=item.get("url", f"https://www.baidu.com/s?wd={item.get('word', '')}"),
                             platform="百度"
                         ))
+                return topics[:limit]
         except Exception as e:
-            print(f"获取百度热搜失败：{e}")
+            print(f"获取百度热搜失败（方案一）：{e}")
 
-        # 如果 API 失败，使用知乎热榜作为替代
-        if not topics:
-            print("百度热搜不可用，使用知乎热榜替代...")
-            topics = self._get_alternative_hot_topics(limit)
+        # 方案一失败，使用备用方案
+        return self._get_baidu_hot_backup(limit)
 
-        return topics[:limit]
+    def _get_baidu_hot_backup(self, limit: int = 10) -> list[HotTopic]:
+        """百度热搜备用方案 - 使用第三方 API"""
+        topics = []
+        try:
+            # 方案二：使用第三方聚合 API
+            url = "https://api.tophub.today/v1/baidu"
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Accept": "application/json"
+            }
+            response = self.session.get(url, headers=headers, timeout=10)
+
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("data") and data["data"].get("list"):
+                    for i, item in enumerate(data["data"]["list"][:limit], 1):
+                        topics.append(HotTopic(
+                            title=item.get("title", ""),
+                            rank=i,
+                            hot_value=item.get("hot", ""),
+                            url=item.get("url", ""),
+                            platform="百度"
+                        ))
+                return topics
+        except Exception as e:
+            print(f"获取百度热搜失败（方案二）：{e}")
+
+        # 方案二也失败，使用知乎热榜作为替代
+        print("百度热搜不可用，使用知乎热榜替代...")
+        return self._get_alternative_hot_topics(limit)
 
     def _get_alternative_hot_topics(self, limit: int = 10) -> list[HotTopic]:
         """获取替代热点（当主要平台不可用时）"""
@@ -183,7 +299,7 @@ class HotTopicTracker:
         """
         topics = []
         try:
-            # 使用抖音热榜 API
+            # 方案一：使用抖音热榜 API
             url = "https://aweme.snssdk.com/aweme/v1/hot/search/list"
             params = {
                 "aid": "1128",
@@ -210,8 +326,38 @@ class HotTopicTracker:
                             url=f"https://www.douyin.com/search/{hot_words}",
                             platform="抖音"
                         ))
+                return topics
         except Exception as e:
-            print(f"获取抖音热榜失败：{e}")
+            print(f"获取抖音热榜失败（方案一）：{e}")
+
+        # 方案一失败，使用备用方案
+        return self._get_douyin_hot_backup(limit)
+
+    def _get_douyin_hot_backup(self, limit: int = 10) -> list[HotTopic]:
+        """抖音热榜备用方案 - 使用第三方 API"""
+        topics = []
+        try:
+            # 方案二：使用第三方聚合 API
+            url = "https://api.tophub.today/v1/douyin"
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Accept": "application/json"
+            }
+            response = self.session.get(url, headers=headers, timeout=10)
+
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("data") and data["data"].get("list"):
+                    for i, item in enumerate(data["data"]["list"][:limit], 1):
+                        topics.append(HotTopic(
+                            title=item.get("title", ""),
+                            rank=i,
+                            hot_value=item.get("hot", ""),
+                            url=item.get("url", ""),
+                            platform="抖音"
+                        ))
+        except Exception as e:
+            print(f"获取抖音热榜失败（方案二）：{e}")
 
         return topics[:limit]
 
@@ -221,6 +367,7 @@ class HotTopicTracker:
         """
         topics = []
         try:
+            # 方案一：使用 36 氪官方 API
             url = "https://gateway.36kr.com/api/mis/nav/home/t/rank/hot"
             headers = {
                 "Content-Type": "application/json",
@@ -244,8 +391,36 @@ class HotTopicTracker:
                             url=f"https://36kr.com/p/{item.get('itemId', '')}",
                             platform="36 氪"
                         ))
+                return topics
         except Exception as e:
-            print(f"获取 36 氪热榜失败：{e}")
+            print(f"获取 36 氪热榜失败（方案一）：{e}")
+
+        # 方案一失败，使用备用方案
+        return self._get_36kr_hot_backup(limit)
+
+    def _get_36kr_hot_backup(self, limit: int = 10) -> list[HotTopic]:
+        """36 氪热榜备用方案"""
+        topics = []
+        try:
+            # 方案二：使用另一 API 端点
+            url = "https://api.36kr.com/w/api/article/recommend"
+            data = self.session.post(
+                url,
+                json={"partner_id": "wap", "siteId": "1", "page": 1},
+                timeout=10
+            ).json()
+
+            if data.get("data") and data["data"].get("hotRankList"):
+                for item in data["data"]["hotRankList"][:limit]:
+                    topics.append(HotTopic(
+                        title=item.get("templateTitle", ""),
+                        rank=item.get("rank", len(topics) + 1),
+                        hot_value="",
+                        url=f"https://36kr.com/p/{item.get('itemId', '')}",
+                        platform="36 氪"
+                    ))
+        except Exception as e:
+            print(f"获取 36 氪热榜失败（方案二）：{e}")
 
         return topics[:limit]
 

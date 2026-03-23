@@ -217,6 +217,26 @@ def save_wechat_config(app_id: str = None, app_secret: str = None):
     save_config(config)
 
 
+def load_email_config() -> dict:
+    """从配置文件加载邮件配置"""
+    config_file = Path("data/email_config.json")
+    if config_file.exists():
+        try:
+            with open(config_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            pass
+    return {}
+
+
+def save_email_config(email_config: dict):
+    """保存邮件配置到文件"""
+    config_file = Path("data/email_config.json")
+    config_file.parent.mkdir(exist_ok=True)
+    with open(config_file, "w", encoding="utf-8") as f:
+        json.dump(email_config, f, ensure_ascii=False, indent=2)
+
+
 def get_available_models(platform: str = None) -> tuple:
     """获取可用模型列表"""
     if platform is None:
@@ -308,6 +328,23 @@ def init_session_state():
         st.session_state.wechat_app_secret = load_wechat_config().get("app_secret", "")
     if "sync_to_wechat" not in st.session_state:
         st.session_state.sync_to_wechat = False
+
+    # 邮件通知配置
+    if "email_smtp_server" not in st.session_state:
+        email_config = load_email_config()
+        st.session_state.email_smtp_server = email_config.get("smtp_server", "")
+    if "email_smtp_port" not in st.session_state:
+        email_config = load_email_config()
+        st.session_state.email_smtp_port = email_config.get("smtp_port", 587)
+    if "email_sender" not in st.session_state:
+        email_config = load_email_config()
+        st.session_state.email_sender = email_config.get("sender_email", "")
+    if "email_password" not in st.session_state:
+        email_config = load_email_config()
+        st.session_state.email_password = email_config.get("sender_password", "")
+    if "email_recipients" not in st.session_state:
+        email_config = load_email_config()
+        st.session_state.email_recipients = email_config.get("recipient_emails", [])
 
     # 热点话题缓存
     if "hot_topics" not in st.session_state:
@@ -576,6 +613,90 @@ def sidebar_config():
                 st.session_state.wechat_app_id = ""
                 st.session_state.wechat_app_secret = ""
                 save_wechat_config(app_id="", app_secret="")
+                st.rerun()
+
+        st.divider()
+
+        # 邮件通知配置
+        st.subheader("📧 邮件通知")
+        st.caption("定时任务执行完成后发送邮件通知")
+
+        # SMTP 服务器
+        email_smtp = st.text_input(
+            "SMTP 服务器",
+            value=st.session_state.email_smtp_server,
+            placeholder="smtp.example.com",
+            help="例如：smtp.qq.com, smtp.gmail.com"
+        )
+        if email_smtp:
+            st.session_state.email_smtp_server = email_smtp
+            email_config = load_email_config()
+            email_config["smtp_server"] = email_smtp
+            save_email_config(email_config)
+
+        # SMTP 端口
+        email_port = st.number_input(
+            "SMTP 端口",
+            min_value=1,
+            max_value=65535,
+            value=st.session_state.email_smtp_port or 587,
+            help="通常为 587 (TLS) 或 465 (SSL)"
+        )
+        if email_port:
+            st.session_state.email_smtp_port = email_port
+            email_config = load_email_config()
+            email_config["smtp_port"] = email_port
+            save_email_config(email_config)
+
+        # 发件人邮箱
+        email_sender = st.text_input(
+            "发件人邮箱",
+            value=st.session_state.email_sender,
+            placeholder="your@email.com"
+        )
+        if email_sender:
+            st.session_state.email_sender = email_sender
+            email_config = load_email_config()
+            email_config["sender_email"] = email_sender
+            save_email_config(email_config)
+
+        # 邮箱密码/授权码
+        email_password = st.text_input(
+            "邮箱密码/授权码",
+            value=st.session_state.email_password,
+            type="password",
+            placeholder="请输入邮箱密码或授权码",
+            help="部分邮箱需要使用授权码而非登录密码"
+        )
+        if email_password:
+            st.session_state.email_password = email_password
+            email_config = load_email_config()
+            email_config["sender_password"] = email_password
+            save_email_config(email_config)
+
+        # 收件人邮箱列表
+        email_recipients = st.text_area(
+            "收件人邮箱列表",
+            value=", ".join(st.session_state.email_recipients) if st.session_state.email_recipients else "",
+            placeholder="recipient1@email.com, recipient2@email.com",
+            help="多个邮箱地址用逗号分隔"
+        )
+        if email_recipients:
+            recipients_list = [e.strip() for e in email_recipients.split(",") if e.strip()]
+            st.session_state.email_recipients = recipients_list
+            email_config = load_email_config()
+            email_config["recipient_emails"] = recipients_list
+            save_email_config(email_config)
+
+        # 清除邮件配置按钮
+        if st.session_state.email_smtp_server or st.session_state.email_sender:
+            if st.button("🗑️ 清除邮件配置", use_container_width=True):
+                st.session_state.email_smtp_server = ""
+                st.session_state.email_smtp_port = 587
+                st.session_state.email_sender = ""
+                st.session_state.email_password = ""
+                st.session_state.email_recipients = []
+                save_email_config({})
                 st.rerun()
 
         st.divider()
@@ -901,11 +1022,72 @@ def sync_to_wechat_draft(article: GeneratedArticle):
                         session.close()
                 except Exception as e:
                     st.caption(f"数据库更新失败：{str(e)}")
+
+                # 显示正式发布按钮
+                st.markdown("---")
+                st.markdown("### 📤 发布操作")
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("📤 正式发布文章", use_container_width=True, type="primary", key=f"publish_{media_id}"):
+                        publish_to_wechat(media_id, article.title)
             else:
                 st.error(f"❌ 同步失败：{result.get('errmsg', '未知错误')}")
 
     except Exception as e:
         st.error(f"同步失败：{str(e)}")
+
+
+def publish_to_wechat(media_id: str, title: str):
+    """正式发布文章到公众号
+
+    Args:
+        media_id: 草稿箱 media_id
+        title: 文章标题
+    """
+    app_id = st.session_state.wechat_app_id
+    app_secret = st.session_state.wechat_app_secret
+
+    if not app_id or not app_secret:
+        st.error("请先配置公众号 AppID 和 AppSecret")
+        return
+
+    try:
+        with st.spinner("正在提交发布..."):
+            wechat_api = WeChatAPI(app_id=app_id, app_secret=app_secret)
+
+            # 提交发布
+            result = wechat_api.submit_publish(media_id)
+
+            if result.get("errcode", 1) == 0:
+                publish_id = result.get("publish_id", "")
+                st.success(f"✅ 提交发布成功！publish_id: `{publish_id}`")
+
+                # 查询发布状态
+                time.sleep(2)  # 等待发布完成
+                status_result = wechat_api.get_publish_status(publish_id)
+
+                if status_result.get("errcode", 1) == 0:
+                    publish_status = status_result.get("publish_status", 0)
+                    status_map = {
+                        0: "发布成功",
+                        1: "发布中",
+                        2: "发布失败",
+                        3: "审核中",
+                        4: "审核失败",
+                        5: "删除"
+                    }
+                    status_text = status_map.get(publish_status, f"未知状态 ({publish_status})")
+                    st.info(f"📊 发布状态：{status_text}")
+
+                    if publish_status == 0:
+                        st.success("🎉 文章已成功发布到公众号！")
+                else:
+                    st.caption(f"查询状态失败：{status_result.get('errmsg', '')}")
+            else:
+                st.error(f"❌ 提交发布失败：{result.get('errmsg', '未知错误')}")
+
+    except Exception as e:
+        st.error(f"发布失败：{str(e)}")
 
 
 def sync_file_to_wechat(file_path: str, content: str):
@@ -1021,6 +1203,14 @@ def sync_file_to_wechat(file_path: str, content: str):
                     session.close()
                 except Exception as e:
                     st.caption(f"数据库更新失败：{str(e)}")
+
+                # 显示正式发布按钮
+                st.markdown("---")
+                st.markdown("### 📤 发布操作")
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("📤 正式发布文章", use_container_width=True, type="primary", key=f"publish_file_{media_id}"):
+                        publish_to_wechat(media_id, wechat_title)
             else:
                 st.error(f"❌ 同步失败：{result.get('errmsg', '未知错误')}")
 
@@ -1286,57 +1476,115 @@ def show_markdown_viewer():
             filtered_files = [f for f in files if search_query.lower() in f.title.lower()]
             st.caption(f"找到 {len(filtered_files)} 个结果")
 
-        # 滚动文件列表
-        with st.container():
+        # 批量模式开关
+        batch_mode = st.checkbox("📋 批量选择模式", value=st.session_state.get("batch_mode", False), key="batch_mode_toggle")
+        st.session_state.batch_mode = batch_mode
+
+        if batch_mode:
+            # 初始化选中的文件列表
+            if "selected_files" not in st.session_state:
+                st.session_state.selected_files = []
+
+            # 批量选择文件
             for i, file_info in enumerate(filtered_files):
-                file_label = f"📄 {file_info.title[:18]}..." if len(file_info.title) > 18 else f"📄 {file_info.title}"
-                file_size_kb = file_info.size / 1024
-                size_text = f"{file_size_kb:.1f}KB"
+                file_label = f"📄 {file_info.title[:15]}..." if len(file_info.title) > 15 else f"📄 {file_info.title}"
+                is_selected = file_info.path in st.session_state.selected_files
 
-                # 选中样式
-                is_selected = st.session_state.get("selected_file") == file_info.path
-
-                if st.button(
+                if st.checkbox(
                     file_label,
-                    key=f"file_{i}_{file_info.path}",
-                    use_container_width=True,
-                    type="primary" if is_selected else "secondary"
+                    value=is_selected,
+                    key=f"batch_{i}_{file_info.path}"
                 ):
-                    st.session_state.selected_file = file_info.path
-                    st.rerun()
+                    if file_info.path not in st.session_state.selected_files:
+                        st.session_state.selected_files.append(file_info.path)
+                else:
+                    if file_info.path in st.session_state.selected_files:
+                        st.session_state.selected_files.remove(file_info.path)
 
-        st.divider()
+            st.divider()
 
-        # 批量操作
-        st.markdown("### 🔧 批量操作")
-        if st.button("🔄 刷新列表", use_container_width=True):
-            st.rerun()
-
-        # 删除选中的文件
-        selected_file = st.session_state.get("selected_file")
-        if selected_file:
-            st.markdown("---")
-            if st.button("🗑️ 删除当前文件", type="secondary", use_container_width=True):
-                st.session_state.show_delete_confirm = selected_file
+            # 批量操作按钮
+            st.markdown("### 🔧 批量操作")
+            if st.button("🗑️ 批量删除选中文件", type="primary", use_container_width=True, disabled=len(st.session_state.selected_files) == 0):
+                st.session_state.show_batch_delete_confirm = True
                 st.rerun()
 
-            # 显示删除确认
-            if st.session_state.get("show_delete_confirm") == selected_file:
-                st.warning("确认删除？")
+            if st.session_state.get("show_batch_delete_confirm"):
+                st.warning(f"确认删除 {len(st.session_state.selected_files)} 个文件？")
                 col1, col2 = st.columns(2)
                 with col1:
-                    if st.button("确认", use_container_width=True, type="primary"):
-                        if file_manager.delete_file(selected_file):
-                            st.success("已删除")
-                            st.session_state.selected_file = None
+                    if st.button("确认删除", use_container_width=True, type="primary", key="confirm_batch_delete"):
+                        results = file_manager.delete_files(st.session_state.selected_files)
+                        success_count = sum(1 for v in results.values() if v)
+                        st.success(f"已删除 {success_count} 个文件")
+                        st.session_state.selected_files = []
+                        st.session_state.show_batch_delete_confirm = False
+                        st.session_state.selected_file = None
+                        st.rerun()
+                with col2:
+                    if st.button("取消", use_container_width=True, key="cancel_batch_delete"):
+                        st.session_state.show_batch_delete_confirm = False
+                        st.rerun()
+
+            if st.button("🔄 刷新列表", use_container_width=True):
+                st.rerun()
+
+            # 显示已选中的文件数量
+            if st.session_state.selected_files:
+                st.caption(f"已选中 {len(st.session_state.selected_files)} 个文件")
+
+        else:
+            # 单选模式 - 原有逻辑
+            with st.container():
+                for i, file_info in enumerate(filtered_files):
+                    file_label = f"📄 {file_info.title[:18]}..." if len(file_info.title) > 18 else f"📄 {file_info.title}"
+                    file_size_kb = file_info.size / 1024
+                    size_text = f"{file_size_kb:.1f}KB"
+
+                    # 选中样式
+                    is_selected = st.session_state.get("selected_file") == file_info.path
+
+                    if st.button(
+                        file_label,
+                        key=f"file_{i}_{file_info.path}",
+                        use_container_width=True,
+                        type="primary" if is_selected else "secondary"
+                    ):
+                        st.session_state.selected_file = file_info.path
+                        st.rerun()
+
+            st.divider()
+
+            # 批量操作
+            st.markdown("### 🔧 批量操作")
+            if st.button("🔄 刷新列表", use_container_width=True):
+                st.rerun()
+
+            # 删除选中的文件
+            selected_file = st.session_state.get("selected_file")
+            if selected_file:
+                st.markdown("---")
+                if st.button("🗑️ 删除当前文件", type="secondary", use_container_width=True):
+                    st.session_state.show_delete_confirm = selected_file
+                    st.rerun()
+
+                # 显示删除确认
+                if st.session_state.get("show_delete_confirm") == selected_file:
+                    st.warning("确认删除？")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button("确认", use_container_width=True, type="primary"):
+                            if file_manager.delete_file(selected_file):
+                                st.success("已删除")
+                                st.session_state.selected_file = None
+                                st.session_state.show_delete_confirm = None
+                                st.rerun()
+                            else:
+                                st.error("删除失败")
+                    with col2:
+                        if st.button("取消", use_container_width=True):
                             st.session_state.show_delete_confirm = None
                             st.rerun()
-                        else:
-                            st.error("删除失败")
-                with col2:
-                    if st.button("取消", use_container_width=True):
-                        st.session_state.show_delete_confirm = None
-                        st.rerun()
 
     # 右侧：文件内容区域
     with content_col:
@@ -1575,6 +1823,24 @@ def show_scheduler():
             )
             task_params["sync_to_wechat"] = sync_to_wechat
 
+            # 正式发布选项
+            if sync_to_wechat:
+                publish_to_wechat_flag = st.checkbox(
+                    "正式发布（不仅保存到草稿箱）",
+                    value=False,
+                    help="勾选后会直接提交发布到公众号（需要已认证的服务号）"
+                )
+                task_params["publish_to_wechat"] = publish_to_wechat_flag
+
+            # 邮件通知选项
+            st.markdown("**通知设置**")
+            send_email = st.checkbox(
+                "启用邮件通知",
+                value=False,
+                help="需要先在侧边栏配置邮件通知功能"
+            )
+            task_params["email_notification"] = send_email
+
             submitted = st.form_submit_button("创建任务", type="primary", use_container_width=True)
 
             if submitted:
@@ -1705,13 +1971,14 @@ def show_scheduler():
 
 
 # 注册任务回调
-def _generate_article_callback(topic: str, template_type: str = "newsAnalysis", sync_to_wechat: bool = False, **kwargs):
+def _generate_article_callback(topic: str, template_type: str = "newsAnalysis", sync_to_wechat: bool = False, publish_to_wechat_flag: bool = False, **kwargs):
     """定时任务：生成文章的回调
 
     Args:
         topic: 文章主题
         template_type: 文章类型
         sync_to_wechat: 是否同步到微信公众号草稿箱
+        publish_to_wechat_flag: 是否正式发布到公众号
     """
     import os
     import json
@@ -1831,6 +2098,23 @@ def _generate_article_callback(topic: str, template_type: str = "newsAnalysis", 
                         db_article.status = "synced"
                         session.commit()
                         print(f"微信公众号同步成功：{wechat_media_id}")
+
+                        # 如果要求正式发布，提交发布
+                        if publish_to_wechat_flag:
+                            try:
+                                print(f"正在提交正式发布...")
+                                publish_result = wechat_api.submit_publish(wechat_media_id)
+                                if publish_result.get("errcode", 1) == 0:
+                                    publish_id = publish_result.get("publish_id", "")
+                                    wechat_sync_result += f"; 已提交发布，publish_id: {publish_id}"
+                                    db_article.status = "published"
+                                    session.commit()
+                                    print(f"微信公众号发布成功：{publish_id}")
+                                else:
+                                    wechat_sync_result += f"; 发布失败：{publish_result.get('errmsg', '')}"
+                            except Exception as pub_error:
+                                wechat_sync_result += f"; 发布异常：{str(pub_error)}"
+                                print(f"微信公众号发布异常：{pub_error}")
                     else:
                         wechat_sync_result = f"草稿箱同步失败：{result.get('errmsg', '未知错误')}"
                         print(f"微信公众号同步失败：{result}")

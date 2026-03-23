@@ -102,6 +102,24 @@ class FileManager:
             print(f"删除文件失败 {file_path}: {e}")
             return False
 
+    def delete_files(self, file_paths: List[str]) -> Dict[str, bool]:
+        """批量删除文件
+        返回：{file_path: success/failure}
+        """
+        results = {}
+        for file_path in file_paths:
+            try:
+                path = Path(file_path)
+                if path.exists():
+                    path.unlink()
+                    results[file_path] = True
+                else:
+                    results[file_path] = False
+            except Exception as e:
+                print(f"删除文件失败 {file_path}: {e}")
+                results[file_path] = False
+        return results
+
     def get_file_info(self, file_path: str) -> Optional[Dict]:
         """获取文件详细信息"""
         path = Path(file_path)

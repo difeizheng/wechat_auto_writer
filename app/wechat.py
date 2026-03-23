@@ -106,7 +106,7 @@ class WeChatAPI:
         show_cover: bool = True
     ) -> dict:
         """
-        发布文章（需要先有永久素材权限）
+        发布文章（需要先有永久素材权限）- 旧接口，兼容用
         """
         token = self._get_access_token()
         url = f"https://api.weixin.qq.com/cgi-bin/material/add_news"
@@ -139,6 +139,53 @@ class WeChatAPI:
             return result
         else:
             raise Exception(f"发布文章失败：{result}")
+
+    def submit_publish(self, media_id: str) -> dict:
+        """
+        提交发布（正式版发布接口）
+        参考：https://developers.weixin.qq.com/doc/offiaccount/Publish/Publish.html
+
+        Args:
+            media_id: 要发布的图文消息 media_id（来自草稿箱或素材库）
+
+        Returns:
+            {"publish_id": 12345, "errcode": 0, "errmsg": "ok"}
+        """
+        token = self._get_access_token()
+        url = "https://api.weixin.qq.com/cgi-bin/freepublish/submit"
+
+        params = {"access_token": token}
+        data = {
+            "media_id": media_id  # 草稿箱或素材库的 media_id
+        }
+
+        response = requests.post(url, json=data, params=params)
+        result = response.json()
+
+        if result.get("errcode", 0) == 0:
+            return result
+        else:
+            raise Exception(f"提交发布失败：{result}")
+
+    def get_publish_status(self, publish_id: int) -> dict:
+        """
+        查询发布状态
+        参考：https://developers.weixin.qq.com/doc/offiaccount/Publish/Get_status.html
+
+        Args:
+            publish_id: 提交发布后返回的 publish_id
+
+        Returns:
+            发布状态信息
+        """
+        token = self._get_access_token()
+        url = "https://api.weixin.qq.com/cgi-bin/freepublish/get"
+
+        params = {"access_token": token}
+        data = {"publish_id": publish_id}
+
+        response = requests.post(url, json=data, params=params)
+        return response.json()
 
     def add_draft(
         self,
@@ -567,5 +614,35 @@ def get_wechat_templates():
             "name": "商务黑",
             "theme_color": "#424242",
             "description": "深色商务主题，适合专业、严肃类文章"
+        },
+        "teal": {
+            "name": "文艺青",
+            "theme_color": "#00897B",
+            "description": "青绿色主题，适合文艺、情感类文章"
+        },
+        "pink": {
+            "name": "甜美粉",
+            "theme_color": "#E91E63",
+            "description": "粉色主题，适合女性、生活类文章"
+        },
+        "indigo": {
+            "name": "科技蓝",
+            "theme_color": "#3F51B5",
+            "description": "深蓝色主题，适合科技、互联网类文章"
+        },
+        "brown": {
+            "name": "复古棕",
+            "theme_color": "#795548",
+            "description": "棕色主题，适合历史、文化类文章"
+        },
+        "golden": {
+            "name": "高端金",
+            "theme_color": "#FF8F00",
+            "description": "金色主题，适合高端、奢华类文章"
+        },
+        "minimal": {
+            "name": "极简灰",
+            "theme_color": "#616161",
+            "description": "极简灰色主题，适合简约风格文章"
         }
     }
