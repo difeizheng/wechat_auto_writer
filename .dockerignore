@@ -1,0 +1,57 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg
+*.egg-info
+dist
+build
+
+# Virtual environments
+venv
+env
+.venv
+.env.local
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+*~
+
+# Project data (mounted as volumes)
+data/*.db
+data/*.json
+output/*.md
+output/*.html
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Documentation
+README.md
+*.md
+!requirements.txt
+
+# Scripts
+scripts/

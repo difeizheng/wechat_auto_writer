@@ -2,12 +2,51 @@ version: '3.8'
 
 services:
   wechat-writer:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: wechat-auto-writer:latest
+    container_name: wechat-auto-writer
     ports:
       - "8601:8601"
+    environment:
+      # 通义千问 API 配置
+      - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY:-}
+      # 服务配置
+      - STREAMLIT_SERVER_PORT=8601
+      - STREAMLIT_SERVER_ADDRESS=0.0.0.0
     env_file:
       - .env
     volumes:
+      # 持久化数据
       - ./data:/app/data
       - ./output:/app/output
+      # 可选：挂载配置文件
+      - ./app:/app/app:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8601/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
     restart: unless-stopped
+    networks:
+      - wechat-network
+    # 资源限制（可选）
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+networks:
+  wechat-network:
+    driver: bridge
+    name: wechat-network
+
+volumes:
+  wechat-data:
+    name: wechat-auto-writer-data

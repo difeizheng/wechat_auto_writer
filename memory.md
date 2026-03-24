@@ -129,8 +129,8 @@ markdown_files    -- Markdown 文件记录
 ```
 
 ### Git 信息
-- 最新提交：`4f481ca` - feat: 文件管理页面增加同步到公众号功能
-- 版本 Tag：`v2.2`、`v2.1`、`v2.0`、`refactor-unified-db-20260319`、`v1.0`
+- 最新提交：`558a1cc` - feat: 完成 v2.3 版本所有待办任务
+- 版本 Tag：`v2.3`、`v2.2`、`v2.1`、`v2.0`、`refactor-unified-db-20260319`、`v1.0`
 - 仓库：https://github.com/difeizheng/wechat_auto_writer.git
 
 ### 下一步工作
@@ -143,6 +143,80 @@ markdown_files    -- Markdown 文件记录
 - [x] 更新 README.md 文档 (2026-03-23 完成)
 
 所有待办任务已完成！🎉
+
+---
+
+## v2.4 (2026-03-24) - 用户体验优化与 Docker 部署增强
+
+**新增功能**:
+
+1. **流式输出支持**
+   - 文章生成支持流式实时输出
+   - 大纲生成和正文撰写都支持流式回调
+   - 进度条实时更新，显示生成进度
+   - 修改 `generator.py` 添加 `stream` 和 `stream_callback` 参数
+
+2. **多轮交互修改文章**
+   - 新增文章预览页面的修改区域
+   - 支持输入自定义修改要求
+   - 提供快速修改选项：优化标题、增加案例、简化语言、增强互动性、添加总结、扩展开头
+   - 修改历史记录功能
+   - 新增 `modify_article()` API 方法
+   - 支持流式显示修改过程
+   - 修改后可保存为新文件
+
+3. **Docker 部署优化**
+   - Dockerfile 多阶段构建，减小镜像大小
+   - 添加健康检查 (Healthcheck)
+   - 使用非 root 用户运行 (安全最佳实践)
+   - docker-compose.yml 增强：
+     - 添加环境变量配置
+     - 添加健康检查配置
+     - 添加资源限制 (CPU 2 核，内存 2G)
+     - 添加自定义网络
+   - 新增 `.dockerignore` 文件，优化构建上下文
+   - 更新 `.env.example` 添加完整环境变量说明
+   - 新增 `docker-start.sh` 和 `docker-start.bat` 启动脚本
+   - 新增 `Makefile` 简化常用操作
+
+4. **自动化测试框架** (2026-03-24 新增)
+   - 使用 pytest + pytest-asyncio 测试框架
+   - 单元测试覆盖 generator 模块（13 个测试用例）
+   - 集成测试覆盖核心功能（15 个测试用例）
+   - 测试覆盖率报告（覆盖率约 17%，核心模块 generator 达 97%）
+   - GitHub Actions CI/CD 配置
+   - 测试命令：`pytest -v` 或 `./run_tests.bat`
+   - 带覆盖率测试：`pytest --cov=app --cov-report=html`
+
+**测试覆盖情况**:
+- `app/generator.py`: 97% (文章生成核心逻辑)
+- `app/models.py`: 99% (数据库模型)
+- `app/scheduler.py`: 24% (定时任务调度器)
+- `app/wechat.py`: 19% (微信公众号 API)
+- `app/hot_topics.py`: 17% (热点追踪)
+- `app/file_manager.py`: 23% (文件管理)
+
+**修改的文件**:
+- `app/generator.py` - 新增流式输出支持、modify_article 方法
+- `app/main.py` - 新增多轮交互修改 UI、modify_article 函数
+- `Dockerfile` - 多阶段构建优化
+- `docker-compose.yml` - 增强配置
+- `.dockerignore` - 新增
+- `.env.example` - 完整环境变量说明
+- `docker-start.sh` - Linux/Mac 启动脚本 (新增)
+- `docker-start.bat` - Windows 启动脚本 (新增)
+- `Makefile` - 简化 Docker 操作 (新增)
+- `requirements.txt` - 添加测试依赖
+- `tests/conftest.py` - 测试配置和夹具 (新增)
+- `tests/test_generator.py` - generator 单元测试 (新增)
+- `tests/test_integration.py` - 集成测试 (新增)
+- `pytest.ini` - pytest 配置 (新增)
+- `.coveragerc` - 覆盖率配置 (新增)
+- `run_tests.sh` / `run_tests.bat` - 测试运行脚本 (新增)
+- `.github/workflows/tests.yml` - CI/CD 配置 (新增)
+- `memory.md` - 更新记录
+
+---
 
 ### 注意事项
 - 需要在侧边栏配置 API Key 才能使用

@@ -3,7 +3,7 @@ AI 文章生成核心逻辑
 支持多平台 API（通义千问、OpenAI、DeepSeek 等）
 """
 import os
-from typing import Optional
+from typing import Optional, Callable
 from pathlib import Path
 from datetime import datetime
 import json
@@ -48,9 +48,20 @@ class ArticleGenerator:
         topic: str,
         template_type: str = "general",
         custom_requirements: Optional[str] = None,
-        model: str = "qwen-plus"
+        model: str = "qwen-plus",
+        stream: bool = False,
+        stream_callback: Optional[Callable] = None
     ) -> ArticleOutline:
-        """生成文章大纲"""
+        """生成文章大纲
+
+        Args:
+            topic: 文章主题
+            template_type: 文章类型
+            custom_requirements: 特殊要求
+            model: 模型名称
+            stream: 是否使用流式输出
+            stream_callback: 流式输出回调函数，接收 (delta_text, done) 参数
+        """
 
         templates = self._get_template_prompt(template_type)
 
@@ -70,16 +81,32 @@ class ArticleGenerator:
 
 只返回 JSON，不要其他内容。"""
 
-        response = await self.client.chat.completions.create(
-            model=model,
-            max_tokens=2048,
-            messages=[
-                {"role": "user", "content": prompt}
-            ]
-        )
+        if stream and stream_callback:
+            # 流式输出
+            content_text = ""
+            stream_response = await self.client.chat.completions.create(
+                model=model,
+                max_tokens=2048,
+                messages=[{"role": "user", "content": prompt}],
+                stream=True
+            )
+            async for chunk in stream_response:
+                if chunk.choices[0].delta.content:
+                    delta = chunk.choices[0].delta.content
+                    content_text += delta
+                    stream_callback(delta, False)
+            stream_callback("", True)  # 完成标志
+        else:
+            response = await self.client.chat.completions.create(
+                model=model,
+                max_tokens=2048,
+                messages=[
+                    {"role": "user", "content": prompt}
+                ]
+            )
+            content_text = response.choices[0].message.content
 
         # 解析 JSON 响应
-        content_text = response.choices[0].message.content
         # 提取 JSON（可能包含在代码块中）
         if "```json" in content_text:
             content_text = content_text.split("```json")[1].split("```")[0]
@@ -100,9 +127,20 @@ class ArticleGenerator:
         topic: str,
         outline: ArticleOutline,
         template_type: str = "general",
-        model: str = "qwen-plus"
+        model: str = "qwen-plus",
+        stream: bool = False,
+        stream_callback: Optional[Callable] = None
     ) -> str:
-        """根据大纲撰写全文"""
+        """根据大纲撰写全文
+
+        Args:
+            topic: 文章主题
+            outline: 文章大纲
+            template_type: 文章类型
+            model: 模型名称
+            stream: 是否使用流式输出
+            stream_callback: 流式输出回调函数，接收 (delta_text, done) 参数
+        """
 
         templates = self._get_template_prompt(template_type)
 
@@ -131,15 +169,31 @@ class ArticleGenerator:
 
 请输出完整的文章内容（Markdown 格式）。"""
 
-        response = await self.client.chat.completions.create(
-            model=model,
-            max_tokens=8192,
-            messages=[
-                {"role": "user", "content": prompt}
-            ]
-        )
-
-        return response.choices[0].message.content
+        if stream and stream_callback:
+            # 流式输出
+            content_text = ""
+            stream_response = await self.client.chat.completions.create(
+                model=model,
+                max_tokens=8192,
+                messages=[{"role": "user", "content": prompt}],
+                stream=True
+            )
+            async for chunk in stream_response:
+                if chunk.choices[0].delta.content:
+                    delta = chunk.choices[0].delta.content
+                    content_text += delta
+                    stream_callback(delta, False)
+            stream_callback("", True)  # 完成标志
+            return content_text
+        else:
+            response = await self.client.chat.completions.create(
+                model=model,
+                max_tokens=8192,
+                messages=[
+                    {"role": "user", "content": prompt}
+                ]
+            )
+            return response.choices[0].message.content
 
     async def generate_article(
         self,
@@ -250,3 +304,61 @@ class ArticleGenerator:
             }, f, ensure_ascii=False, indent=2)
 
         return filepath
+
+    async def modify_article(
+        self,
+        original_content: str,
+        modification_request: str,
+        topic: str = "",
+        template_type: str = "general",
+        model: str = "qwen-plus",
+        stream: bool = False,
+        stream_callback: Optional[Callable] = None
+    ) -> str:
+        """修改已生成的文章
+
+        Args:
+            original_content: 原始文章内容
+            modification_request: 修改要求，例如"增加一个总结段落"、"让语气更幽默"
+            topic: 文章主题
+            template_type: 文章类型
+            model: 模型名称
+            stream: 是否使用流式输出
+            stream_callback: 流式输出回调函数
+        """
+        prompt = f"""请修改以下公众号文章：
+
+**文章主题**: {topic}
+**文章类型**: {template_type}
+**修改要求**: {modification_request}
+
+**原文内容**:
+{original_content}
+
+请根据修改要求输出完整的修改后的文章内容（Markdown 格式）。
+如果修改要求涉及结构调整，请保持文章整体风格一致。
+如果修改要求是增加内容，请在合适的位置插入。
+如果修改要求是删除内容，请确保文章连贯性。"""
+
+        if stream and stream_callback:
+            content_text = ""
+            stream_response = await self.client.chat.completions.create(
+                model=model,
+                max_tokens=8192,
+                messages=[{"role": "user", "content": prompt}],
+                stream=True
+            )
+            async for chunk in stream_response:
+                if chunk.choices[0].delta.content:
+                    delta = chunk.choices[0].delta.content
+                    content_text += delta
+                    stream_callback(delta, False)
+            stream_callback("", True)
+            return content_text
+        else:
+            response = await self.client.chat.completions.create(
+                model=model,
+                max_tokens=8192,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            return response.choices[0].message.content

@@ -29,7 +29,8 @@
       "Bash(find . -name \"__pycache__\" -type d -exec rm -rf {} +)",
       "Bash(sqlite3:*)",
       "Bash(powershell \"Stop-Process -Id 41340 -Force\")",
-      "Bash(powershell \"Stop-Process -Id 30156 -Force\")"
+      "Bash(powershell \"Stop-Process -Id 30156 -Force\")",
+      "Bash(docker-compose up:*)"
     ]
   }
 }

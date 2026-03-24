@@ -888,6 +888,199 @@ def step3_preview_article(article: GeneratedArticle):
         except Exception as e:
             st.error(f"保存失败：{str(e)}")
 
+    # 多轮交互修改区域
+    st.markdown("---")
+    st.markdown("### ✏️ 多轮交互修改")
+    st.caption("与 AI 对话，让 AI 帮你修改和完善文章")
+
+    # 初始化修改历史
+    if "modification_history" not in st.session_state:
+        st.session_state.modification_history = []
+    if "current_article_content" not in st.session_state:
+        st.session_state.current_article_content = article.content
+
+    # 显示修改历史
+    if st.session_state.modification_history:
+        st.markdown("**修改历史**")
+        for i, mod in enumerate(st.session_state.modification_history):
+            with st.expander(f"修改 {i+1}: {mod['request'][:50]}...", expanded=False):
+                st.markdown(f"**修改要求**: {mod['request']}")
+                st.markdown(f"**修改后内容**:")
+                st.markdown(mod['content'][:500] + "..." if len(mod['content']) > 500 else mod['content'])
+
+    # 修改输入框
+    modification_request = st.text_area(
+        "请输入修改要求",
+        placeholder="例如：\n- 增加一个总结段落\n- 让语气更幽默风趣一些\n- 添加更多实际案例\n- 简化技术术语的解释\n- 增加互动性问题",
+        height=100,
+        key="modification_input"
+    )
+
+    # 修改选项
+    col1, col2 = st.columns(2)
+    with col1:
+        quick_mods = st.multiselect(
+            "快速修改选项",
+            options=["优化标题", "增加案例", "简化语言", "增强互动性", "添加总结", "扩展开头"],
+            key="quick_mods"
+        )
+    with col2:
+        pass  # 留空
+
+    # 组合修改要求
+    full_request = modification_request
+    if quick_mods:
+        quick_request = " ".join(quick_mods)
+        full_request = f"{modification_request} {quick_request}".strip()
+
+    # 执行修改
+    if st.button("✏️ 执行修改", type="primary", use_container_width=True):
+        if not full_request:
+            st.warning("请输入修改要求")
+        else:
+            modify_article(full_request, article)
+
+
+def modify_article(modification_request: str, original_article: GeneratedArticle):
+    """修改文章 - 支持流式输出"""
+    from pathlib import Path
+    import asyncio
+    from datetime import datetime
+    from threading import Thread
+    import queue
+
+    try:
+        generator = ArticleGenerator(
+            api_key=st.session_state.api_key,
+            base_url=st.session_state.base_url,
+            model=st.session_state.model_name
+        )
+
+        # 创建显示容器
+        st.markdown("#### 正在修改文章...")
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        status_text.text("🤖 AI 正在思考修改方案...")
+
+        # 使用 queue 和线程来实现流式输出
+        message_queue = queue.Queue()
+        result_container = st.empty()
+        full_content = ""
+
+        def stream_callback(delta, done):
+            """流式回调，将文本放入队列"""
+            message_queue.put(("content", delta))
+            if done:
+                message_queue.put(("done", ""))
+
+        async def run_modification():
+            """异步执行修改"""
+            try:
+                modified_content = await generator.modify_article(
+                    original_content=original_article.content,
+                    modification_request=modification_request,
+                    topic=st.session_state.get("topic", ""),
+                    template_type=original_article.template_type,
+                    model=st.session_state.model_name,
+                    stream=True,
+                    stream_callback=stream_callback
+                )
+                message_queue.put(("result", modified_content))
+            except Exception as e:
+                message_queue.put(("error", str(e)))
+
+        # 在后台线程中运行异步任务
+        def run_async_task():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(run_modification())
+            loop.close()
+
+        thread = Thread(target=run_async_task)
+        thread.start()
+
+        # 使用 write_stream 实时显示内容
+        with result_container:
+            content_placeholder = st.empty()
+            display_content = ""
+            chunk_count = 0
+
+            while True:
+                msg_type, msg_data = message_queue.get()
+
+                if msg_type == "content" and msg_data:
+                    display_content += msg_data
+                    content_placeholder.markdown(display_content)
+                    chunk_count += 1
+                    # 更新进度（粗略估计）
+                    progress = min(0.3 + (chunk_count * 0.001), 0.9)
+                    progress_bar.progress(progress)
+                    status_text.text(f"✍️ 正在撰写中... (已生成 {len(display_content)} 字符)")
+
+                elif msg_type == "done":
+                    progress_bar.progress(1.0)
+                    status_text.text("✅ 修改完成！")
+                    break
+
+                elif msg_type == "error":
+                    st.error(f"修改失败：{msg_data}")
+                    break
+
+                elif msg_type == "result":
+                    modified_content = msg_data
+                    # 更新 session state
+                    st.session_state.modification_history.append({
+                        "request": modification_request,
+                        "content": modified_content
+                    })
+                    st.session_state.current_article_content = modified_content
+
+                    # 显示修改后的内容
+                    st.success("修改完成！")
+                    st.markdown("### 修改后的内容")
+                    st.markdown(modified_content)
+
+                    # 提供操作按钮
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        if st.button("✅ 使用此版本", type="primary", use_container_width=True):
+                            # 更新当前文章
+                            original_article.content = modified_content
+                            st.session_state.generated_article = original_article
+                            st.session_state.modification_history = []
+                            st.session_state.current_article_content = modified_content
+                            # 保存新版本
+                            output_dir = Path("output")
+                            output_dir.mkdir(exist_ok=True)
+                            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                            filename = f"{timestamp}_{original_article.title[:20]}_modified.md"
+                            filepath = output_dir / filename
+                            with open(filepath, "w", encoding="utf-8") as f:
+                                f.write(f"# {original_article.title}\n\n")
+                                if original_article.subtitle:
+                                    f.write(f"## {original_article.subtitle}\n\n")
+                                f.write(f"*生成时间：{original_article.created_at}*\n\n")
+                                f.write(f"*文章类型：{original_article.template_type}*\n\n")
+                                f.write(f"*修改历史：{len(st.session_state.modification_history)} 次修改*\n\n")
+                                f.write("---\n\n")
+                                f.write(modified_content)
+                            st.success(f"已保存为新文件：{filename}")
+                            st.rerun()
+                    with col2:
+                        if st.button("🔄 继续修改", use_container_width=True):
+                            st.rerun()
+                    with col3:
+                        if st.button("❌ 放弃修改", use_container_width=True):
+                            st.session_state.modification_history = []
+                            st.session_state.current_article_content = original_article.content
+                            st.rerun()
+                    break
+
+        thread.join()
+
+    except Exception as e:
+        st.error(f"修改失败：{str(e)}")
+
 
 def download_markdown(article: GeneratedArticle):
     """提供 Markdown 下载"""
