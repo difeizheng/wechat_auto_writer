@@ -9,7 +9,7 @@
     "qwen-turbo",
     "qwen-max"
   ],
-  "current_platform": "通义千问",
+  "current_platform": "自定义平台",
   "platforms": {
     "OpenAI": {
       "model_name": "gpt-4o"
@@ -38,6 +38,9 @@
         "Pro/zai-org/GLM-5"
       ],
       "model_name": "Pro/zai-org/GLM-5"
+    },
+    "DeepSeek": {
+      "model_name": "deepseek-chat"
     }
   },
   "wechat": {

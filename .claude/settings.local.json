@@ -30,7 +30,12 @@
       "Bash(sqlite3:*)",
       "Bash(powershell \"Stop-Process -Id 41340 -Force\")",
       "Bash(powershell \"Stop-Process -Id 30156 -Force\")",
-      "Bash(docker-compose up:*)"
+      "Bash(docker-compose up:*)",
+      "WebFetch(domain:developers.weixin.qq.com)",
+      "WebFetch(domain:blog.csdn.net)",
+      "Bash(iconv -f utf-8 -t gbk)",
+      "Bash(curl -s \"https://developers.weixin.qq.com/doc/service/api/draftbox/draftmanage/api_draft_add.html\")",
+      "WebFetch(domain:www.cnblogs.com)"
     ]
   }
 }

@@ -222,20 +222,36 @@ class WeChatAPI:
         article_data = {
             "title": title,
             "author": author or "",
-            "digest": digest or "",
             "content": content,  # 已经是 HTML 格式
-            "show_cover": 1 if show_cover else 0
+            "show_cover": 1 if show_cover else 0,
+            "thumb_media_id": thumb_media_id
         }
 
-        # 缩略图 media_id 是必填的
-        if thumb_media_id:
-            article_data["thumb_media_id"] = thumb_media_id
-        elif cover_media_id:
-            article_data["thumb_media_id"] = cover_media_id
+        # digest 字段可选，如果不传微信会自动抓取正文前 54 个字
+        # 只有当 digest 不为空时才添加该字段
+        if digest:
+            article_data["digest"] = digest
 
         data = {
             "articles": [article_data]
         }
+
+        # 调试输出：打印各字段大小
+        print(f"[DEBUG] title: {len(title)} 字符，{len(title.encode('utf-8'))} 字节")
+        print(f"[DEBUG] title 内容：{title}")
+        # 将调试信息写入文件，方便在 Streamlit 页面显示
+        with open('debug_output.txt', 'w', encoding='utf-8') as f:
+            f.write(f"title: {title}\n")
+            f.write(f"  字符数：{len(title)}\n")
+            f.write(f"  字节数：{len(title.encode('utf-8'))}\n")
+            f.write(f"content: {len(content)} 字符 ≈ {len(content.encode('utf-8'))/1024:.1f}KB\n")
+            f.write(f"request payload: {data}\n")
+        if digest:
+            print(f"[DEBUG] digest: {len(digest)} 字符，{len(digest.encode('utf-8'))} 字节")
+        else:
+            print("[DEBUG] digest: (未传递，微信将自动抓取正文前 54 字)")
+        print(f"[DEBUG] content: {len(content)} 字符，{len(content.encode('utf-8'))} 字节 ≈ {len(content.encode('utf-8'))/1024:.1f}KB")
+        print(f"[DEBUG] request payload: {data}")
 
         response = requests.post(url, json=data, params=params)
         result = response.json()
@@ -326,10 +342,15 @@ class WeChatAPI:
         return response.json()
 
 
-def markdown_to_wechat_html(markdown_content: str, theme_color: str = "#1E88E5") -> str:
+def markdown_to_wechat_html(markdown_content: str, theme_color: str = "#1E88E5", include_style: bool = True) -> str:
     """
     将 Markdown 转换为微信公众号友好的 HTML
     支持多种主题颜色和精美排版样式
+
+    Args:
+        markdown_content: Markdown 内容
+        theme_color: 主题颜色
+        include_style: 是否包含 CSS 样式（默认 True，设为 False 可测试微信 API 限制）
     """
     import markdown
 
@@ -570,13 +591,13 @@ def markdown_to_wechat_html(markdown_content: str, theme_color: str = "#1E88E5")
     )
 
     # 添加一些自动美化处理
-    # 将普通的 blockquote 转换为带样式的引用
-    html_content = html_content.replace(
-        '<blockquote>',
-        '<blockquote>'
-    )
+    html_content = html_content.replace('<blockquote>', '<blockquote>')
 
-    return css_style + html_content
+    # 根据参数决定是否包含 CSS 样式
+    if include_style:
+        return css_style + html_content
+    else:
+        return html_content
 
 
 def get_wechat_templates():
