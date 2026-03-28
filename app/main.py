@@ -1120,7 +1120,8 @@ def download_html(article: GeneratedArticle):
 
 
 def sync_to_wechat_draft(article: GeneratedArticle):
-    """同步文章到微信公众号草稿箱"""
+    """同步文章到微信公众号草稿箱 - v2.5 修复版"""
+    # V2.5_FIX_20260328: 标题限制改为 32 字节
     # 检查是否配置了公众号信息
     app_id = st.session_state.wechat_app_id
     app_secret = st.session_state.wechat_app_secret
@@ -1159,24 +1160,27 @@ def sync_to_wechat_draft(article: GeneratedArticle):
             # 调试输出
             st.caption(f"📄 HTML 内容大小：{len(html_content)} 字符 ≈ {len(html_content.encode('utf-8'))/1024:.1f}KB")
 
-            # 微信公众号标题长度限制：最多 32 个字符
-            # 参考：https://developers.weixin.qq.com/doc/service/api/draftbox/draftmanage/api_draft_add.html
+            # v2.5 修复：微信公众号标题长度限制为 32 字节（不是 32 字符！）
             import re
             wechat_title = article.title
-            # 移除 emoji（微信 API 不支持 emoji 作为标题）
+            # 移除 emoji
             wechat_title = re.sub(r'[\U00010000-\U00010FFFF]', '', wechat_title)
-            # 严格模式：只保留中文、英文、数字、空格（移除所有标点和特殊符号）
-            # 使用明确的字符范围，避免 \w 的 Unicode 问题
+            # 严格模式：只保留中文、英文、数字、空格
             wechat_title = re.sub(r'[^a-zA-Z0-9\u4e00-\u9fff ]', '', wechat_title)
 
-            if len(wechat_title) > 32:
-                wechat_title = wechat_title[:29] + "..."
-                st.caption(f"⚠️ 标题过长 ({len(article.title)}字符)，已截断为 32 字符")
+            # 按字节数限制：最多 32 字节
+            title_bytes = wechat_title.encode('utf-8')
+            if len(title_bytes) > 32:
+                while len(wechat_title.encode('utf-8')) > 29:
+                    wechat_title = wechat_title[:-1]
+                wechat_title = wechat_title + "..."
+                st.caption(f"⚠️ 标题过长 ({len(title_bytes)}字节)，已截断为 32 字节")
 
             st.caption(f"📝 最终标题：{wechat_title} ({len(wechat_title)}字符，{len(wechat_title.encode('utf-8'))}字节)")
-            # 显示原始标题和清理后标题的对比
             if article.title != wechat_title:
                 st.caption(f"🔍 原始标题：{article.title}")
+            # v2.5 调试：显示处理过程
+            st.caption(f"🔧 处理步骤：1)移除 emoji 2)移除标点 3)按 32 字节截断")
 
             # 摘要长度限制：最多 128 个字符（微信 API 限制）
             # 参考：https://developers.weixin.qq.com/doc/service/api/draftbox/draftmanage/api_draft_add.html
@@ -1232,16 +1236,58 @@ def sync_to_wechat_draft(article: GeneratedArticle):
 
             # 调用保存到草稿箱 API
             # 测试：暂时不传 digest 字段，让微信自动抓取正文前 54 字
-            result = wechat_api.add_draft(
-                title=wechat_title,
-                content=html_content,
-                author="",
-                digest=None,  # 不传摘要，让微信自动抓取
-                show_cover=True,
-                thumb_media_id=thumb_media_id
-            )
+            st.markdown("---")
+            st.markdown("### 🔍 调试信息")
+            with st.expander("点击查看详细调试信息", expanded=True):
+                st.markdown("**请求参数：**")
+                debug_info = {
+                    "标题 (title)": wechat_title,
+                    "标题字符数": len(wechat_title),
+                    "标题字节数": len(wechat_title.encode('utf-8')),
+                    "HTML 内容字符数": len(html_content),
+                    "HTML 内容大小 (KB)": round(len(html_content.encode('utf-8'))/1024, 2),
+                    "thumb_media_id": thumb_media_id or "None",
+                    "digest": "None (让微信自动抓取)"
+                }
+                st.json(debug_info)
 
-            if result.get("errcode", 1) == 0:
+                st.markdown("**标题逐字符分析：**")
+                char_df = []
+                for i, c in enumerate(wechat_title):
+                    char_df.append({
+                        "位置": i,
+                        "字符": c,
+                        "Unicode": f"U+{ord(c):04X}",
+                        "字节数": len(c.encode('utf-8'))
+                    })
+                st.table(char_df)
+
+                st.markdown("**请求 Payload：**")
+                payload_info = {
+                    "articles": [{
+                        "title": wechat_title,
+                        "author": "",
+                        "content_length": len(html_content),
+                        "show_cover": 1,
+                        "thumb_media_id": thumb_media_id
+                    }]
+                }
+                st.json(payload_info)
+
+            try:
+                result = wechat_api.add_draft(
+                    title=wechat_title,
+                    content=html_content,
+                    author="",
+                    digest=None,  # 不传摘要，让微信自动抓取
+                    show_cover=True,
+                    thumb_media_id=thumb_media_id
+                )
+            except Exception as api_error:
+                st.error(f"❌ API 调用失败：{str(api_error)}")
+                raise
+
+            if "media_id" in result:
                 media_id = result.get("media_id", "")
                 st.success(f"✅ 同步成功！草稿 media_id: `{media_id}`")
                 st.info("📱 请登录微信公众号后台查看草稿箱")
@@ -1261,10 +1307,8 @@ def sync_to_wechat_draft(article: GeneratedArticle):
                 # 显示正式发布按钮
                 st.markdown("---")
                 st.markdown("### 📤 发布操作")
-                col1, col2 = st.columns(2)
-                with col1:
-                    if st.button("📤 正式发布文章", use_container_width=True, type="primary", key=f"publish_{media_id}"):
-                        publish_to_wechat(media_id, article.title)
+                if st.button("📤 正式发布文章", use_container_width=True, type="primary", key=f"publish_{media_id}"):
+                    publish_to_wechat(media_id, article.title)
             else:
                 st.error(f"❌ 同步失败：{result.get('errmsg', '未知错误')}")
 
@@ -1293,7 +1337,7 @@ def publish_to_wechat(media_id: str, title: str):
             # 提交发布
             result = wechat_api.submit_publish(media_id)
 
-            if result.get("errcode", 1) == 0:
+            if result.get("errcode", 0) == 0:
                 publish_id = result.get("publish_id", "")
                 st.success(f"✅ 提交发布成功！publish_id: `{publish_id}`")
 
@@ -1301,7 +1345,7 @@ def publish_to_wechat(media_id: str, title: str):
                 time.sleep(2)  # 等待发布完成
                 status_result = wechat_api.get_publish_status(publish_id)
 
-                if status_result.get("errcode", 1) == 0:
+                if status_result.get("errcode", 0) == 0:
                     publish_status = status_result.get("publish_status", 0)
                     status_map = {
                         0: "发布成功",
@@ -1367,52 +1411,47 @@ def sync_file_to_wechat(file_path: str, content: str):
             # 将 Markdown 转换为微信公众号 HTML 格式（不包含 CSS 样式）
             theme_color = get_wechat_templates().get(st.session_state.wechat_theme, {}).get("theme_color", "#1E88E5")
             html_content = markdown_to_wechat_html(content, theme_color, include_style=False)
+            # 移除 emoji（4字节字符），微信 content 字段不支持
+            html_content = re.sub(r'[\U00010000-\U0010FFFF]', '', html_content)
 
-            # 微信 API 限制：content 字段大小不可超过 2KB（2048 字节）
-            if len(html_content.encode('utf-8')) > 2048:
-                # 截断 HTML 内容（简单处理：截断到 2000 字节）
-                max_bytes = 2000
-                truncated = html_content.encode('utf-8')[:max_bytes].decode('utf-8', errors='ignore')
-                # 确保在完整的 HTML 标签处截断
-                if '<' in truncated[-50:]:
-                    last_tag_start = truncated.rfind('<', 0, 50)
-                    if last_tag_start > 0:
-                        truncated = truncated[:last_tag_start]
-                html_content = truncated
-                st.caption(f"⚠️ HTML 内容过大 ({len(content.encode('utf-8'))/1024:.1f}KB)，已截断为 2KB")
+            # 微信 API 限制：content 字段大小不可超过 1MB，实际建议不超过 20000 字
+            if len(html_content.encode('utf-8')) > 1048576:
+                # 按字节截断，避免截断多字节字符
+                max_bytes = 1000000
+                truncated_bytes = html_content.encode('utf-8')[:max_bytes]
+                html_content = truncated_bytes.decode('utf-8', errors='ignore')
+                # 从末尾找最后一个完整标签结束处（避免留下残缺标签）
+                last_tag_end = html_content.rfind('>')
+                if last_tag_end > 0:
+                    html_content = html_content[:last_tag_end + 1]
+                st.caption(f"⚠️ HTML 内容过大，已截断")
 
-            # 微信公众号标题长度限制：最多 32 个字符
+            # === v2.5 修复：微信公众号标题长度限制为 32 字节（不是 32 字符！）===
             # 参考：https://developers.weixin.qq.com/doc/service/api/draftbox/draftmanage/api_draft_add.html
+            # API 明确说明：title 字段"总长度不超过 32 个字"，指的是字节数（UTF-8 编码）
             wechat_title = title
-            # 移除 emoji
             import re
+            # 1) 移除 emoji（4 字节字符）
             wechat_title = re.sub(r'[\U00010000-\U00010FFFF]', '', wechat_title)
-            # 移除特殊符号，保留中文、英文、数字、空格和常见标点
+            # 2) 移除特殊符号，保留中文、英文、数字、空格和常见标点
             wechat_title = re.sub(r'[^\w\s\u4e00-\u9fff,.!?;:，。！？、：；""''（）【】《》\-]', '', wechat_title)
 
-            if len(wechat_title) > 32:
-                wechat_title = wechat_title[:29] + "..."
-                st.caption(f"⚠️ 标题过长 ({len(title)}字符)，已截断为 32 字符")
+            # 3) 检查字节数（UTF-8 编码下中文=3 字节，英文=1 字节）
+            title_bytes = wechat_title.encode('utf-8')
+            if len(title_bytes) > 32:
+                # 按字节截断：目标是 29 字节，留出 3 字节给"..."
+                while len(wechat_title.encode('utf-8')) > 29:
+                    wechat_title = wechat_title[:-1]
+                wechat_title = wechat_title + "..."
+                st.warning(f"⚠️ 标题过长 ({len(title_bytes)}字节)，已截断为 32 字节")
 
-            st.caption(f"📝 最终标题：{wechat_title} ({len(wechat_title)}字符)")
+            st.info(f"📝 最终标题：{wechat_title} ({len(wechat_title)}字符，{len(wechat_title.encode('utf-8'))}字节)")
+            st.info(f"🔧 处理步骤：1) 移除 emoji 2) 移除标点 3) 按 32 字节截断")
 
-            # 提取摘要（取正文前 120 字符）并处理长度限制
-            text_content = re.sub(r'[!#*`\[\]\(\)]', '', content)  # 移除 Markdown 符号
-            text_content = re.sub(r'\n+', '\n', text_content).strip()
-            wechat_digest = text_content[:120].replace('\n', ' ') if text_content else ""
-
-            # 摘要长度限制：最多 128 个字符（微信 API 限制）
-            if wechat_digest:
-                # 移除 emoji
-                wechat_digest = re.sub(r'[\U00010000-\U00010FFFF]', '', wechat_digest)
-                # 移除特殊符号，保留中文、英文、数字、空格和常见标点
-                wechat_digest = re.sub(r'[^\w\s\u4e00-\u9fff,.!?;:，。！？、：；""''（）【】《》\-]', '', wechat_digest)
-
-                if len(wechat_digest) > 128:
-                    wechat_digest = wechat_digest[:125] + "..."
-                    st.caption(f"⚠️ 摘要过长 ({len(wechat_digest)}字符)，已截断为 128 字符")
-
-                st.caption(f"📝 最终摘要：{wechat_digest} ({len(wechat_digest)}字符)")
+            # === digest 说明 ===
+            # 微信 draft/add 接口 digest 字段实测容易触发 45004（description size out of limit）
+            # 不传 digest，让微信自动抓取正文前 54 字作为摘要，最安全可靠
+            wechat_digest = None
 
             # 调试输出：检查内容大小
             st.caption(f"📄 HTML 内容大小：{len(html_content)} 字符 ≈ {len(html_content.encode('utf-8'))/1024:.1f}KB")
@@ -1460,7 +1499,7 @@ def sync_file_to_wechat(file_path: str, content: str):
                 thumb_media_id=thumb_media_id
             )
 
-            if result.get("errcode", 1) == 0:
+            if "media_id" in result:
                 media_id = result.get("media_id", "")
                 st.success(f"✅ 同步成功！草稿 media_id: `{media_id}`")
                 st.info("📱 请登录微信公众号后台查看草稿箱")
@@ -1480,10 +1519,8 @@ def sync_file_to_wechat(file_path: str, content: str):
                 # 显示正式发布按钮
                 st.markdown("---")
                 st.markdown("### 📤 发布操作")
-                col1, col2 = st.columns(2)
-                with col1:
-                    if st.button("📤 正式发布文章", use_container_width=True, type="primary", key=f"publish_file_{media_id}"):
-                        publish_to_wechat(media_id, wechat_title)
+                if st.button("📤 正式发布文章", use_container_width=True, type="primary", key=f"publish_file_{media_id}"):
+                    publish_to_wechat(media_id, wechat_title)
             else:
                 st.error(f"❌ 同步失败：{result.get('errmsg', '未知错误')}")
 
@@ -2376,7 +2413,7 @@ def _generate_article_callback(topic: str, template_type: str = "newsAnalysis", 
                         show_cover=True
                     )
 
-                    if result.get("errcode", 1) == 0:
+                    if "media_id" in result:
                         wechat_media_id = result.get("media_id", "")
                         wechat_sync_result = f"草稿箱同步成功，media_id: {wechat_media_id}"
                         # 更新文章记录
@@ -2390,7 +2427,7 @@ def _generate_article_callback(topic: str, template_type: str = "newsAnalysis", 
                             try:
                                 print(f"正在提交正式发布...")
                                 publish_result = wechat_api.submit_publish(wechat_media_id)
-                                if publish_result.get("errcode", 1) == 0:
+                                if publish_result.get("errcode", 0) == 0:
                                     publish_id = publish_result.get("publish_id", "")
                                     wechat_sync_result += f"; 已提交发布，publish_id: {publish_id}"
                                     db_article.status = "published"
