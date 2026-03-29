@@ -99,7 +99,27 @@ def migrate_scheduler_data():
         new_conn.close()
 
 
-def init_database():
+def add_missing_columns():
+    """补充 v2.1+ 新增的列（幂等，重复执行无副作用）"""
+    conn = sqlite3.connect(ARTICLES_DB)
+    cur = conn.cursor()
+    migrations = [
+        ("articles",       "ALTER TABLE articles ADD COLUMN wechat_media_id TEXT"),
+        ("markdown_files", "ALTER TABLE markdown_files ADD COLUMN wechat_media_id TEXT"),
+    ]
+    for table, sql in migrations:
+        cur.execute(f"PRAGMA table_info({table})")
+        existing = [row[1] for row in cur.fetchall()]
+        col = sql.split("ADD COLUMN")[1].strip().split()[0]
+        if col not in existing:
+            cur.execute(sql)
+            print(f"  已添加 {table}.{col}")
+        else:
+            print(f"  {table}.{col} 已存在，跳过")
+    conn.commit()
+    conn.close()
+
+
     """初始化数据库（创建表结构）"""
     from app.models import init_db
     init_db()
@@ -115,8 +135,12 @@ if __name__ == "__main__":
     print("\n1. 初始化数据库表结构...")
     init_database()
 
-    # 2. 迁移数据
-    print("\n2. 迁移旧数据...")
+    # 2. 补充缺失列
+    print("\n2. 补充新增列...")
+    add_missing_columns()
+
+    # 3. 迁移数据
+    print("\n3. 迁移旧数据...")
     migrate_scheduler_data()
 
     print("\n" + "=" * 50)

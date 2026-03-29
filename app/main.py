@@ -1144,23 +1144,10 @@ def sync_to_wechat_draft(article: GeneratedArticle):
             theme_color = get_wechat_templates().get(st.session_state.wechat_theme, {}).get("theme_color", "#1E88E5")
             html_content = markdown_to_wechat_html(article.content, theme_color, include_style=False)
 
-            # 微信 API 限制：content 字段大小不可超过 2KB（2048 字节）
-            if len(html_content.encode('utf-8')) > 2048:
-                # 截断 HTML 内容（简单处理：截断到 2000 字节）
-                max_bytes = 2000
-                truncated = html_content.encode('utf-8')[:max_bytes].decode('utf-8', errors='ignore')
-                # 确保在完整的 HTML 标签处截断
-                if '<' in truncated[-50:]:
-                    last_tag_start = truncated.rfind('<', 0, 50)
-                    if last_tag_start > 0:
-                        truncated = truncated[:last_tag_start]
-                html_content = truncated
-                st.caption(f"⚠️ HTML 内容过大 ({len(article.content.encode('utf-8'))/1024:.1f}KB)，已截断为 2KB")
-
             # 调试输出
             st.caption(f"📄 HTML 内容大小：{len(html_content)} 字符 ≈ {len(html_content.encode('utf-8'))/1024:.1f}KB")
 
-            # v2.5 修复：微信公众号标题长度限制为 32 字节（不是 32 字符！）
+            # 微信标题限制：最多 64 字节（UTF-8）
             import re
             wechat_title = article.title
             # 移除 emoji
@@ -1168,13 +1155,13 @@ def sync_to_wechat_draft(article: GeneratedArticle):
             # 严格模式：只保留中文、英文、数字、空格
             wechat_title = re.sub(r'[^a-zA-Z0-9\u4e00-\u9fff ]', '', wechat_title)
 
-            # 按字节数限制：最多 32 字节
+            # 按字节数限制：最多 64 字节
             title_bytes = wechat_title.encode('utf-8')
-            if len(title_bytes) > 32:
-                while len(wechat_title.encode('utf-8')) > 29:
+            if len(title_bytes) > 64:
+                while len(wechat_title.encode('utf-8')) > 61:
                     wechat_title = wechat_title[:-1]
                 wechat_title = wechat_title + "..."
-                st.caption(f"⚠️ 标题过长 ({len(title_bytes)}字节)，已截断为 32 字节")
+                st.caption(f"⚠️ 标题过长 ({len(title_bytes)}字节)，已截断为 64 字节")
 
             st.caption(f"📝 最终标题：{wechat_title} ({len(wechat_title)}字符，{len(wechat_title.encode('utf-8'))}字节)")
             if article.title != wechat_title:
@@ -1438,12 +1425,11 @@ def sync_file_to_wechat(file_path: str, content: str):
 
             # 3) 检查字节数（UTF-8 编码下中文=3 字节，英文=1 字节）
             title_bytes = wechat_title.encode('utf-8')
-            if len(title_bytes) > 32:
-                # 按字节截断：目标是 29 字节，留出 3 字节给"..."
-                while len(wechat_title.encode('utf-8')) > 29:
+            if len(title_bytes) > 64:
+                while len(wechat_title.encode('utf-8')) > 61:
                     wechat_title = wechat_title[:-1]
                 wechat_title = wechat_title + "..."
-                st.warning(f"⚠️ 标题过长 ({len(title_bytes)}字节)，已截断为 32 字节")
+                st.warning(f"⚠️ 标题过长 ({len(title_bytes)}字节)，已截断为 64 字节")
 
             st.info(f"📝 最终标题：{wechat_title} ({len(wechat_title)}字符，{len(wechat_title.encode('utf-8'))}字节)")
             st.info(f"🔧 处理步骤：1) 移除 emoji 2) 移除标点 3) 按 32 字节截断")
@@ -2390,19 +2376,6 @@ def _generate_article_callback(topic: str, template_type: str = "newsAnalysis", 
                     # 转换 HTML 格式（不包含 CSS 样式）
                     theme_color = "#1E88E5"  # 默认蓝色
                     html_content = markdown_to_wechat_html(article.content, theme_color, include_style=False)
-
-                    # 微信 API 限制：content 字段大小不可超过 2KB（2048 字节）
-                    if len(html_content.encode('utf-8')) > 2048:
-                        # 截断 HTML 内容（简单处理：截断到 2000 字节）
-                        max_bytes = 2000
-                        truncated = html_content.encode('utf-8')[:max_bytes].decode('utf-8', errors='ignore')
-                        # 确保在完整的 HTML 标签处截断
-                        if '<' in truncated[-50:]:
-                            last_tag_start = truncated.rfind('<', 0, 50)
-                            if last_tag_start > 0:
-                                truncated = truncated[:last_tag_start]
-                        html_content = truncated
-                        print(f"HTML 内容过大，已截断为 2KB")
 
                     # 保存到草稿箱
                     result = wechat_api.add_draft(

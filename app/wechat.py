@@ -335,19 +335,157 @@ class WeChatAPI:
         return response.json()
 
 
+class _WeChatHTMLTransformer:
+    """将 markdown 生成的 HTML 转换为带内联样式的微信公众号 HTML。
+
+    微信公众号会剥离 <style> 标签，只保留元素上的 style 属性，
+    因此必须把所有样式写成内联形式。
+    """
+
+    SELF_CLOSING = {'br', 'hr', 'img', 'input', 'meta', 'link'}
+
+    def __init__(self, theme_color: str):
+        self.theme_color = theme_color
+        self._in_pre = False
+        self._in_blockquote = False
+
+    def _tag_style(self, tag: str) -> str:
+        c = self.theme_color
+        styles = {
+            'h1': (
+                f'display:block;font-size:22px;font-weight:700;color:{c};'
+                f'text-align:center;border-bottom:2px solid {c};'
+                'padding-bottom:12px;margin:32px 0 20px;line-height:1.4;letter-spacing:1px;'
+            ),
+            'h2': (
+                f'display:block;font-size:18px;font-weight:600;color:{c};'
+                f'border-left:4px solid {c};padding:8px 0 8px 14px;'
+                'margin:28px 0 14px;line-height:1.4;background-color:#f8f9fa;'
+            ),
+            'h3': (
+                f'display:block;font-size:16px;font-weight:600;color:{c};'
+                f'border-left:2px solid {c};padding-left:10px;'
+                'margin:22px 0 10px;line-height:1.4;'
+            ),
+            'h4': (
+                'display:block;font-size:15px;font-weight:600;color:#34495e;'
+                'margin:18px 0 8px;line-height:1.4;'
+            ),
+            'p': (
+                'display:block;margin:16px 0;line-height:1.9;'
+                'color:#333;text-align:justify;font-size:15px;'
+            ),
+            'blockquote': (
+                f'display:block;margin:20px 0;padding:12px 20px;'
+                f'border-left:4px solid {c};background-color:#f8f9fa;'
+                'color:#666;border-radius:0 6px 6px 0;'
+            ),
+            'ul': 'display:block;padding-left:20px;margin:12px 0;',
+            'ol': 'display:block;padding-left:20px;margin:12px 0;',
+            'li': 'display:list-item;margin:8px 0;line-height:1.8;color:#333;font-size:15px;',
+            'strong': f'color:{c};font-weight:700;',
+            'b':      f'color:{c};font-weight:700;',
+            'em': 'color:#888;font-style:italic;',
+            'i':  'color:#888;font-style:italic;',
+            'code': (
+                'background-color:#f5f7f9;padding:2px 6px;border-radius:3px;'
+                'font-size:13px;color:#e74c3c;border:1px solid #eaecef;'
+            ),
+            'pre': (
+                'display:block;background-color:#282c34;padding:16px;'
+                'border-radius:6px;font-size:13px;line-height:1.6;margin:16px 0;'
+            ),
+            'table': 'display:table;width:100%;border-collapse:collapse;margin:16px 0;font-size:14px;',
+            'thead': 'display:table-header-group;',
+            'tbody': 'display:table-row-group;',
+            'tr':    'display:table-row;',
+            'th': (
+                f'display:table-cell;background-color:{c};color:white;'
+                'padding:10px 8px;text-align:left;font-weight:600;'
+            ),
+            'td': 'display:table-cell;padding:8px;border-bottom:1px solid #e0e0e0;color:#333;',
+            'hr': 'display:block;border:none;border-top:2px solid #eee;margin:24px 0;',
+            'img': 'max-width:100%;height:auto;display:block;margin:16px auto;border-radius:4px;',
+            'a':  f'color:{c};text-decoration:none;',
+        }
+        return styles.get(tag, '')
+
+    def transform(self, html: str) -> str:
+        """将 HTML 字符串转换为带内联样式的版本。"""
+        from html.parser import HTMLParser
+
+        result = []
+        in_pre = [False]
+        transformer = self
+
+        class _Parser(HTMLParser):
+            def handle_starttag(self, tag, attrs):
+                if tag == 'pre':
+                    in_pre[0] = True
+                style = transformer._tag_style(tag)
+                # code inside <pre>: 覆盖 inline code 样式，改用代码块配色
+                if tag == 'code' and in_pre[0]:
+                    style = (
+                        'background-color:transparent;padding:0;border:none;'
+                        'color:#abb2bf;font-size:13px;line-height:1.6;'
+                    )
+                attrs_dict = dict(attrs)
+                existing = attrs_dict.pop('style', '') or ''
+                if existing:
+                    style = existing.rstrip(';') + ';' + style
+                if style:
+                    attrs_dict['style'] = style
+                attrs_str = ''.join(
+                    f' {k}="{v}"' if v is not None else f' {k}'
+                    for k, v in attrs_dict.items()
+                )
+                result.append(f'<{tag}{attrs_str}>')
+
+            def handle_endtag(self, tag):
+                if tag == 'pre':
+                    in_pre[0] = False
+                if tag not in transformer.SELF_CLOSING:
+                    result.append(f'</{tag}>')
+
+            def handle_data(self, data):
+                result.append(data)
+
+            def handle_entityref(self, name):
+                result.append(f'&{name};')
+
+            def handle_charref(self, name):
+                result.append(f'&#{name};')
+
+        _Parser(convert_charrefs=False).feed(html)
+        return ''.join(result)
+
+
 def markdown_to_wechat_html(markdown_content: str, theme_color: str = "#1E88E5", include_style: bool = True) -> str:
     """
     将 Markdown 转换为微信公众号友好的 HTML
-    支持多种主题颜色和精美排版样式
 
     Args:
         markdown_content: Markdown 内容
         theme_color: 主题颜色
-        include_style: 是否包含 CSS 样式（默认 True，设为 False 可测试微信 API 限制）
+        include_style: True=<style>标签（本地预览用）；False=内联样式（微信 API 用）
     """
     import markdown
 
-    # 自定义 CSS 样式 - 优化版微信公众号排版
+    # include_style=False：用于微信 API，生成内联样式 HTML
+    if not include_style:
+        html_body = markdown.markdown(
+            markdown_content,
+            extensions=['extra', 'tables', 'nl2br']
+        )
+        body = _WeChatHTMLTransformer(theme_color).transform(html_body)
+        wrapper = (
+            'font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",'
+            '"Hiragino Sans GB","Microsoft YaHei",sans-serif;'
+            'font-size:15px;line-height:1.8;color:#333;word-wrap:break-word;padding:0 4px;'
+        )
+        return f'<section style="{wrapper}">{body}</section>'
+
+    # include_style=True：用于 Streamlit 本地预览，保留 <style> 标签
     css_style = f"""
     <style>
     /* 全局设置 */
@@ -583,14 +721,7 @@ def markdown_to_wechat_html(markdown_content: str, theme_color: str = "#1E88E5",
         extensions=['extra', 'codehilite', 'tables', 'nl2br']
     )
 
-    # 添加一些自动美化处理
-    html_content = html_content.replace('<blockquote>', '<blockquote>')
-
-    # 根据参数决定是否包含 CSS 样式
-    if include_style:
-        return css_style + html_content
-    else:
-        return html_content
+    return css_style + html_content
 
 
 def get_wechat_templates():

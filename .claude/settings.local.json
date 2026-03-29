@@ -35,7 +35,26 @@
       "WebFetch(domain:blog.csdn.net)",
       "Bash(iconv -f utf-8 -t gbk)",
       "Bash(curl -s \"https://developers.weixin.qq.com/doc/service/api/draftbox/draftmanage/api_draft_add.html\")",
-      "WebFetch(domain:www.cnblogs.com)"
+      "WebFetch(domain:www.cnblogs.com)",
+      "Bash(Get-Process)",
+      "Bash(Where-Object {$_rocessName -eq \"python\" -and $_ainWindowTitle -like \"*streamlit*\"})",
+      "Bash(powershell \"Stop-Process -Id 29144 -Force\" 2>&1)",
+      "Bash(powershell \"Stop-Process -Id \\(Get-NetTCPConnection -LocalPort 8601 -ErrorAction SilentlyContinue\\).OwningProcess -Force\")",
+      "Bash(powershell -Command \"Get-Process | Where-Object {$_ProcessName -eq ''python''} | Stop-Process -Force\")",
+      "Bash(powershell \"taskkill /F /PID 9388\")",
+      "Bash(net stop:*)",
+      "Bash(Where-Object {$_rocessName -eq \"python\"})",
+      "Bash(xargs -r kill -9)",
+      "Bash(cmd /c \"taskkill /F /PID 15304\")",
+      "Bash(cmd /c \"taskkill /F /PID 15304 /PID 24032\")",
+      "Bash(cmd /c \"netstat -ano | findstr :8602 | findstr LISTENING | awk '{print $5}' | xargs -r kill 2>/dev/null || echo 'checking process...'\")",
+      "Bash(findstr :8602)",
+      "Bash(cmd /c \"taskkill /F /PID 10408\")",
+      "Bash(powershell -Command \"Stop-Process -Id 10408 -Force\")",
+      "Bash(cmd /c \"taskkill /PID 15304 /F\" 2>&1)",
+      "Bash(cmd /c \"taskkill /PID 15304 /F 2>&1 && echo done\")",
+      "Bash(cmd /c \"for /f \"\"tokens=5\"\" %a in \\(''netstat -ano ^| findstr :8601 ^| findstr LISTENING''\\) do taskkill /PID %a /F\")",
+      "Bash(cmd /c \"wmic process where \\\\\"CommandLine like '%streamlit%'\\\\\" get ProcessId\" 2>&1)"
     ]
   }
 }
